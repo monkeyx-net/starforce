@@ -24,14 +24,17 @@ Controls (two players: an 8-way stick and fire each)
   Coin: Select / 5 (6: the second slot)
   Start: Start / 1 or Enter;  2-player start: L1+Start / 2
   Graphics: Select+L1 / F3 steps the presets, F4 glow, F5 CRT scanlines
-  Operator menu (the DIP switches): Select+R1 / F2
+  Screen: F6 scale mode (auto, integer, fit, stretch), F7 rotation (0, 90,
+  270: a landscape device held on its side; the joysticks turn too); also
+  in the operator menu, or --scale / --rotate
+  Operator menu (the DIP switches, the screen): Select+R1 / F2
   Exit: hold Select+Start for 1 second / Esc
   With two pads the first is player one and the second player two; with
   one pad it drives both (the players take turns).
 
 Settings and scores
   The DIP switches (coinage, ships, bonus ship, difficulty, demo sounds,
-  cabinet) are in starforce.cfg, changed with the operator menu; the BEST
+  cabinet) and the screen's scale mode and rotation are in starforce.cfg, changed with the operator menu; the BEST
   PLAYERS table is kept in starforce.hiscore. Both live in the save folder:
   $STARFORCE_SAVE_DIR, else ~/.local/share/starforce (%APPDATA%\starforce
   on Windows); the PortMaster port keeps them in its conf/ folder.

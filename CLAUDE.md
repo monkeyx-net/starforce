@@ -50,6 +50,7 @@ ctest --test-dir build -L mame                    # tests needing MAME + the ROM
 build/starforce --windowed                        # play the game in C (dev builds find build/assets, roms/starforc.zip)
 build/starforce --windowed --emulate              # the ROM's own code on the emulated board
 build/starforce --windowed --test-card            # the test card (ROM status, input tester)
+build/starforce --windowed --scale fit --rotate 90   # scale auto|integer|fit|stretch, rotate 0|90|270 (F6, F7)
 build/starforce --check-rom roms/starforc.zip     # verify a ROM set
 build/starforce --dump-rom roms/starforc.zip [region]  # MAME's regions as hex lines (maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3 sprites dac)
 build/starforce --extract roms/starforc.zip [dir] # assets from the ROM set (dev builds: build/assets after each build)
@@ -77,10 +78,13 @@ arrive with their phases.
   `--input`, `--rom`, `--check-rom`, `--dump-rom`, `--extract`; the DIP
   switches (`starforce.cfg`, the operator menu), the high scores
   (`starforce.hiscore`), the controls page
-- `platform/` - the only code that includes SDL: `video.c` (224x256
-  portrait framebuffer, integer scaling or fitted with sharp bilinear,
-  scanlines down the screen), `input.c` (two 8-way sticks and a button
-  each; pads and keyboard), `audio.c` (streams generated samples)
+- `platform/` - `video.c` (224x256 portrait framebuffer laid out by the
+  scale mode, fitted or stretched ones with sharp bilinear, turned by the
+  rotation; scanlines down the arcade's picture; the glow added on the
+  GPU), `input.c` (two 8-way sticks and a button each; pads and keyboard;
+  turned with the screen), `audio.c` (streams generated samples): the only
+  code that includes SDL; `screen.c` (the layout and the sticks' turn, no
+  SDL)
 - `gfx/` - draws into the framebuffer in arcade coordinates: `fb.c`,
   `blit.c`, `scale.c`, `enhance.c`, `debugfont.c` (from Galaga), and
   `starforce.c` (a frame from the video RAM: the fg layer, the three
@@ -126,6 +130,9 @@ Every change keeps `ctest` green. Tests arrive with their phase (plan
 section 4). Now:
 
 - `enhance` - always runs (scalers, presets, glow)
+- `screen` - always runs: the scale modes and rotations on the devices'
+  screens (inside, centred, integer scales on the pixel grid), the
+  joysticks turned
 - `z80` - always runs: every opcode's T-states and machine cycles, known
   flag results, NMI, IM 1, HALT
 - `rom_load` - label `rom`: loads the set from the zip, from renamed

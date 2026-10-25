@@ -1,7 +1,7 @@
 # Native SDL2 Star Force for Linux handhelds and desktops (aarch64, x86_64),
 # Windows (MinGW), macOS and the web (Emscripten). See PROGRESS_STARFORCE_PORT.md.
 cmake_minimum_required(VERSION 3.13)
-project(starforce VERSION 0.1.1 LANGUAGES C)
+project(starforce VERSION 0.1.2 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -43,6 +43,7 @@ add_library(starforce_core STATIC
   src/gfx/enhance.c
   src/gfx/debugfont.c
   src/gfx/starforce.c
+  src/platform/screen.c
   src/emu/z80.c
   src/emu/board.c
   src/emu/sound.c
@@ -120,6 +121,9 @@ enable_testing()
 add_executable(test_enhance src/tests/test_enhance.c)
 target_link_libraries(test_enhance PRIVATE starforce_core)
 add_test(NAME enhance COMMAND test_enhance)
+add_executable(test_screen src/tests/test_screen.c)
+target_link_libraries(test_screen PRIVATE starforce_core)
+add_test(NAME screen COMMAND test_screen)
 add_executable(test_z80 src/tests/test_z80.c)
 target_link_libraries(test_z80 PRIVATE starforce_core)
 add_test(NAME z80 COMMAND test_z80)

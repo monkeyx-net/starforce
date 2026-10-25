@@ -51,7 +51,10 @@ scrolling background layers) is new.
    glow, scanlines), cosmetic only, classic by default. The screen is
    portrait (224x256 as the player sees it, MAME's 256x224 turned 90
    degrees): integer scaling where it fills the screen, else fitted (sharp
-   bilinear, pillarboxed); the scanlines run down the screen.
+   bilinear, pillarboxed); the scanlines run down the screen. Scale modes
+   (auto, integer, fit, stretch) and a rotation (0, 90, 270, the joysticks
+   turned too) as the Galaga port's (`platform/screen.c`; F6, F7, the
+   operator menu, `starforce.cfg`), added 2026-10-25.
 6. **The game in C.** The game logic is rewritten in C (`src/sim/`), from
    the ROM's behaviour (traces, probes, the disassembly MAME writes to
    `build/re`, never committed): each CPU's program whole, instruction by
@@ -303,6 +306,8 @@ asking.
 ## 4. Tests
 
 - `enhance` - always runs (scalers, presets, glow)
+- `screen` - always runs: the scale modes and rotations on the devices'
+  screens, the joysticks turned
 - `rom_load` - label `rom`: the set from the zip, from renamed copies in a
   folder (CRC matching, the planes in another order, unrelated files
   beside them), and a clean failure on an empty folder

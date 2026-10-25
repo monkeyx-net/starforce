@@ -3,23 +3,38 @@
 #include <SDL.h>
 
 #define SCANLINE_SHADE 150 /* brightness of a scanline's dark rows, /255 */
-/* An integer scale is used when it fills at least this much of the fitted
-   size; otherwise the picture is scaled to fit (640x480: 1.667x, pillarboxed). */
-#define INTEGER_FILL 0.9
+#define WINDOW_FILL 0.9   /* a window's share of the desktop, at most */
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
 static SDL_Texture *texture, *scanlines_tex, *target, *glow_tex;
 static int tex_w, tex_h, scanlines_scale, target_scale;
 static bool accelerated;
+static ScreenSettings screen;
+
+void video_set_screen(const ScreenSettings *s)
+{
+    screen = *s;
+}
+
+/* The largest integer scale whose window fits the desktop (3 if unknown) */
+static int window_scale(int w, int h)
+{
+    SDL_Rect r;
+    if (SDL_GetDisplayUsableBounds(0, &r)) return 3;
+    int scale = 1;
+    while ((scale + 1) * w <= r.w * WINDOW_FILL && (scale + 1) * h <= r.h * WINDOW_FILL) scale++;
+    return scale;
+}
 
 bool video_init(bool windowed)
 {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0"); /* nearest */
 
     Uint32 flags = windowed ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_FULLSCREEN_DESKTOP;
-    window = SDL_CreateWindow("Star Force", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                              FB_WIDTH * 3, FB_HEIGHT * 3, flags);
+    int turned = screen.rotate == 90 || screen.rotate == 270;
+    int w = turned ? FB_HEIGHT : FB_WIDTH, h = turned ? FB_WIDTH : FB_HEIGHT, scale = window_scale(w, h);
+    window = SDL_CreateWindow("Star Force", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w * scale, h * scale, flags);
     if (!window) {
         SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
         return false;
@@ -37,25 +52,18 @@ bool video_init(bool windowed)
     return true;
 }
 
-/* The largest scale that fits the window, and whether it is used as is (an
-   integer scale) or the picture is fitted. */
-static double fit_scale(int *integer)
+static void layout(ScreenLayout *l)
 {
     int out_w, out_h;
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
-    double fx = (double)out_w / FB_WIDTH, fy = (double)out_h / FB_HEIGHT;
-    double fit = fx < fy ? fx : fy;
-    int whole = (int)fit;
-    *integer = fit < 1 || whole >= fit * INTEGER_FILL;
-    return *integer ? (whole < 1 ? 1 : whole) : fit;
+    screen_layout(&screen, out_w, out_h, l);
 }
 
 int video_display_scale(void)
 {
-    int integer;
-    double fit = fit_scale(&integer);
-    int scale = integer ? (int)fit : (int)fit + 1;
-    return scale > FB_MAX_SCALE && !integer ? FB_MAX_SCALE : scale;
+    ScreenLayout l;
+    layout(&l);
+    return l.crisp > FB_MAX_SCALE && !l.exact ? FB_MAX_SCALE : l.crisp;
 }
 
 /* A 1-px-high row, one column per output column: the monitor is turned, so
@@ -128,17 +136,16 @@ void video_present(const Framebuffer *fb, bool scanlines, const uint32_t *glow)
     }
     SDL_UpdateTexture(texture, NULL, fb->px, fb->w * (int)sizeof(uint32_t));
 
-    int out_w, out_h, integer;
-    SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
-    double fit = fit_scale(&integer);
-    int w = (int)(FB_WIDTH * fit), h = (int)(FB_HEIGHT * fit);
-    SDL_Rect dst = { (out_w - w) / 2, (out_h - h) / 2, w, h };
+    ScreenLayout l;
+    layout(&l);
+    SDL_Rect dst = { l.x, l.y, l.w, l.h };
+    const double angle = screen.rotate; /* clockwise, about the picture's centre: the screen's */
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    int crisp = integer ? (int)fit : (int)fit + 1; /* device pixels per arcade pixel before fitting */
+    int crisp = l.crisp; /* device pixels per arcade pixel before fitting */
     SDL_Texture *g = glow ? glow_texture(glow) : NULL;
-    SDL_Texture *t = integer ? NULL : fit_target(crisp);
+    SDL_Texture *t = l.exact ? NULL : fit_target(crisp);
     if (t && !SDL_SetRenderTarget(renderer, t)) {
         SDL_Rect whole = { 0, 0, FB_WIDTH * crisp, FB_HEIGHT * crisp };
         SDL_RenderCopy(renderer, texture, NULL, &whole);
@@ -148,13 +155,13 @@ void video_present(const Framebuffer *fb, bool scanlines, const uint32_t *glow)
             if (scanlines_tex) SDL_RenderCopy(renderer, scanlines_tex, NULL, &whole);
         }
         SDL_SetRenderTarget(renderer, NULL);
-        SDL_RenderCopy(renderer, t, NULL, &dst);
+        SDL_RenderCopyEx(renderer, t, NULL, &dst, angle, NULL, SDL_FLIP_NONE);
     } else {
-        SDL_RenderCopy(renderer, texture, NULL, &dst);
-        if (g) SDL_RenderCopy(renderer, g, NULL, &dst);
+        SDL_RenderCopyEx(renderer, texture, NULL, &dst, angle, NULL, SDL_FLIP_NONE);
+        if (g) SDL_RenderCopyEx(renderer, g, NULL, &dst, angle, NULL, SDL_FLIP_NONE);
         if (scanlines && crisp >= 2) { /* one output column per arcade column has no room for a scanline */
             if (scanlines_scale != crisp) build_scanlines(crisp);
-            if (scanlines_tex) SDL_RenderCopy(renderer, scanlines_tex, NULL, &dst);
+            if (scanlines_tex) SDL_RenderCopyEx(renderer, scanlines_tex, NULL, &dst, angle, NULL, SDL_FLIP_NONE);
         }
     }
     SDL_RenderPresent(renderer);

@@ -37,8 +37,22 @@ keyboard) drives both, the players taking turns.
 | Next graphics preset | Select + L1 | F3 |
 | Glow on / off | | F4 |
 | CRT scanlines on / off | | F5 |
-| Operator menu (DIP switches) | Select + R1 | F2 |
+| Screen scale mode / rotation | operator menu | F6 / F7 |
+| Operator menu (DIP switches, screen) | Select + R1 | F2 |
 | Quit | hold Select + Start for 1 s | Esc |
+
+## Screen
+
+`--scale auto|integer|fit|stretch` and `--rotate 0|90|270` lay the picture
+out; F6 and F7, or the operator menu, change them, and `starforce.cfg`
+keeps them. **auto** (the default) uses an integer scale where it fills at
+least 90% of the screen, else fits the picture (640x480: 1.875x, sharp
+bilinear); **integer** always uses the largest whole scale; **fit** fills
+as much as it can keeping the arcade's shape; **stretch** fills the whole
+screen. **rotate** turns the portrait picture a quarter (90: the top at the
+screen's right; 270: at its left) for a landscape device held on its side:
+a 640x480 handheld then shows an exact 2x, and the joysticks turn with the
+picture.
 
 ## Building
 

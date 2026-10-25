@@ -3,6 +3,17 @@
 ---
 ## Changelog
 
+### v0.1.2 (2026-10-25)
+
+#### Port
+
+- **Screen scale modes and rotation** — `--scale auto|integer|fit|stretch`
+  and `--rotate 0|90|270` (F6, F7, the operator menu; kept in
+  `starforce.cfg`), as the Galaga port's. Turned, a landscape device held on
+  its side gets an exact 2x at 640x480 and 3x at 1280x720; the joysticks
+  turn with the picture. Windows open at the largest integer scale that
+  fits the desktop.
+
 ### v0.1.1 (2026-10-25)
 
 #### Game
