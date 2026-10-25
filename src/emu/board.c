@@ -390,7 +390,7 @@ static uint8_t read_sub(void *ctx, uint16_t a)
     return v;
 }
 
-static void sound_write(Board *b, int chip, uint8_t v)
+static void sound_event(Board *b, int chip, uint8_t v)
 {
     if (b->sound_count == BOARD_SOUND_EVENTS) return;
     SoundEvent *e = &b->sound[b->sound_count++];
@@ -407,11 +407,11 @@ static void write_sub(void *ctx, uint16_t a, uint8_t v)
     b->access++;
     if (b->write_hook) b->write_hook(b, CPU_SUB, a, v);
     if (a >= 0x4000 && a < 0x4400) b->subram[a & 0x3FF] = v;
-    else if (a == 0x8000) sound_write(b, 0, v);
-    else if (a == 0x9000) sound_write(b, 1, v);
-    else if (a == 0xA000) sound_write(b, 2, v);
-    else if (a == 0xD000) sound_write(b, 3, v);
-    else if (a == 0xE000) sound_write(b, 4, v);
+    else if (a == 0x8000) sound_event(b, 0, v);
+    else if (a == 0x9000) sound_event(b, 1, v);
+    else if (a == 0xA000) sound_event(b, 2, v);
+    else if (a == 0xD000) sound_event(b, 3, v);
+    else if (a == 0xE000) sound_event(b, 4, v);
 }
 
 static uint8_t in_sub(void *ctx, uint16_t port)
@@ -490,10 +490,32 @@ static void reti_sub(void *ctx)
     update_sub_irq(b);
 }
 
+/* ---- sound ----------------------------------------------------------------------- */
+
+#define TICK_AS (AS_PER_SECOND / SOUND_TICK_HZ)
+
+static int64_t ticks(Atime t) { return t.sec * SOUND_TICK_HZ + t.as / TICK_AS; }
+
+/* the frame's sound, from the writes' times in it, to its end */
+static void make_sound(Board *b, Atime end)
+{
+    int64_t start = ticks(b->frame_start);
+    b->audio_count = 0;
+    for (int i = 0; i < b->sound_count; i++) {
+        const SoundEvent *e = &b->sound[i];
+        b->audio_count += sound_run(&b->chips, start + e->at / TICK_AS, b->audio + b->audio_count,
+                                    BOARD_AUDIO_MAX - b->audio_count);
+        sound_write(&b->chips, e->chip, e->value);
+    }
+    b->audio_count += sound_run(&b->chips, ticks(end), b->audio + b->audio_count, BOARD_AUDIO_MAX - b->audio_count);
+    b->sound_count = 0;
+}
+
 /* ---- the screen's events --------------------------------------------------------- */
 
 static void vblank(Board *b, int unused)
 {
+    make_sound(b, b->timers[T_VBLANK].expire);
     b->frame_start = b->timers[T_VBLANK].expire;
     b->frame_done = 1;
     b->irq_main = 1;
@@ -532,6 +554,7 @@ void board_init(Board *b, const RomSet *rom)
         z80_reset(&z[i]);
     }
     b->pio.ip = 1; /* pending from power-on (MAME's) */
+    sound_init(&b->chips, rom->dac);
     /* the screen starts at the vertical blank */
     timer_set(b, T_VBLANK, (Atime){ 0, FRAME_AS }, 0, vblank, 0);
     timer_set(b, T_LINE0, (Atime){ 0, (BOARD_LINES - BOARD_VBLANK_LINE) * LINE_AS }, 0, line0, 0);
@@ -618,7 +641,6 @@ static void timeslice(Board *b)
 void board_run_frame(Board *b)
 {
     b->frame_done = 0;
-    b->sound_count = 0;
     while (!b->frame_done) timeslice(b);
     b->frame++;
 }

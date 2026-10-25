@@ -184,10 +184,30 @@ frames, power-on to over a minute of play; `mame_capture`):
   - $D000 set turns the whole native picture round (x, y to 255 - x, 255
     - y), the sprites 2 native lines further down.
 
+### 2.1 Sound (E2, measured from MAME's output)
+
+`mame_emu` checks the board's sound against MAME's recording of the
+scripted run (`game.wav` from `mame_capture`): in 1/10 s windows where
+MAME is not quiet (after the first second), all 448 within 3 dB of its
+level (the test asks 90%; mean 0.01 dB, the worst 1.6 dB; the waveforms
+correlate at 0.85, MAME's resampler 4 samples behind). Measured with
+probes writing the chips from Lua, both CPUs parked (`emu/sound.c`):
+- An SN76489A (a chip at the sub's $8000, $9000, $A000): a channel gives
+  0 or 4095 x 10^(-v / 10) in MAME's output (2 dB steps, 15 silent),
+  unipolar; tone 0 period $100 plays 244 Hz (2 MHz / 32 / N). The noise:
+  white or periodic, at the period's rate. At power-on every channel is
+  loud (MAME's output clips at 32767) until the sound driver quiets them.
+- The DAC: each zero count of the CTC's channel 2 puts the next of the
+  first 16 bytes of `07b.bin` on it (16 steps a cycle; bytes 16-31 are 0);
+  it gives (v / 256 x 2 - 1) x 1638 times the low nibble of the sub's
+  $D000 / 15. It holds 0 until stepped; the volume is full at power-on,
+  so MAME's output sits at -1638 until the driver writes $D000 (the driver
+  writes $F0-$FF, PSG-style). $E000 is written $FF once (no effect
+  heard).
+- The sum, sampled at 48 kHz (each sample the mean of the chips' 125 kHz
+  ticks in it), clipped to 16 bits.
+
 To confirm by probe (written up here as confirmed):
-- **Sound:** the SN76489As' tone, noise and volume as MAME outputs them;
-  the DAC playing `07b.bin` stepped by the CTC, `$D000`'s and `$E000`'s
-  part.
 - **High scores:** a table with initials in RAM.
 - **The cocktail flip** on MAME's cocktail run (the flip's tile and
   sprite placement is probed, not yet checked on the game's frames).
@@ -198,7 +218,7 @@ To confirm by probe (written up here as confirmed):
 |---|---|---|---|
 | P0 | `git init`, skeleton from Galaga, loader for the starforc set, test card, MAME ROM map, packaging, CI, `CLAUDE.md`, README | `enhance`, `rom_load`, `mame_rom_map` pass | done 2026-10-25 |
 | E1 | Two Z80s, the PIO and CTC, board (memory maps, latches, interrupts, watchdog), video (fg, three bg layers, sprites, palette RAM); the game plays via `--emulate` (silent) | `z80`; `mame_emu`: both CPUs cycle for cycle over traced frames; RAM and pictures equal at captured frames (`mame_capture`) | done 2026-10-25 (no watchdog found) |
-| E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | not started |
+| E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | done 2026-10-25 |
 | X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | not started |
 | C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | not started |
 | E3/E4 | Polish (cocktail flip, devices, web), the DIP switches' menu, high-score saving, release | device checklist; published | not started |
@@ -228,7 +248,8 @@ asking.
   instruction (cycle and registers); at every captured frame all RAM
   (the sub's too), the video RAM and registers, the flip and the picture
   equal MAME's; the sound against MAME's recording of the run
-  (`game.wav`, E2)
+  (`game.wav`): in 1/10 s windows where MAME is not quiet, at least 90%
+  within 3 dB of its level
 - `extract` - label `rom`: two extractions are byte-identical and hold
   every file; what is read back is the ROM set's; the font reads the title
   screen the emulated board draws; no manifest without a ROM set

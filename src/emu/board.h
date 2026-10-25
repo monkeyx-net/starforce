@@ -37,6 +37,7 @@
 #include <stdint.h>
 
 #include "assets/rom.h"
+#include "emu/sound.h"
 #include "emu/z80.h"
 
 #define BOARD_CPUS 2 /* main, sub: MAME's order */
@@ -95,6 +96,7 @@ typedef struct {
 } SoundEvent;
 
 #define BOARD_SOUND_EVENTS 4096
+#define BOARD_AUDIO_MAX 1024 /* a frame's samples: 811 or 812 at 48 kHz */
 
 struct Board {
     Z80 z80[BOARD_CPUS];
@@ -161,6 +163,9 @@ struct Board {
 
     SoundEvent sound[BOARD_SOUND_EVENTS];
     int sound_count;
+    Sound chips;
+    int16_t audio[BOARD_AUDIO_MAX]; /* the last frame's samples, made at its end */
+    int audio_count;
 
     int64_t frame;             /* frames run */
     Atime frame_start;         /* the frame's vertical blank */

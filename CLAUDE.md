@@ -94,8 +94,9 @@ arrive with their phases.
   acknowledge and RETI for a daisy chain), `board.c` (main and sub, the
   memory maps, the sound latch, the PIO and CTC on the sub's daisy chain,
   interrupts, MAME's scheduler: attosecond time, slices, syncs, Z80s
-  stopping between machine cycles); E2: `sn76489.c` (the three PSGs),
-  `dac.c` (the waveform DAC)
+  stopping between machine cycles; the sound's writes timed in the frame),
+  `sound.c` (the three SN76489As and the waveform DAC, modelled from
+  MAME's output; 811 or 812 samples a frame at 48 kHz)
 - `sim/` (C phases) - the game in C: `main_run.c`, `sub_run.c` (each Z80
   program whole, every instruction a case of one resumable function),
   `cpu.h`, `game.c`, `sim.c` (the board's scheduler and devices a frame at
@@ -132,10 +133,10 @@ section 4). Now:
   frames; each frame drawn from its dump equals MAME's
 - `mame_emu` - label `mame`: the board replays that script from power-on:
   MAME's traces of frames 1700-1800 (both CPUs, instruction for
-  instruction); all memory and every pixel at every captured frame
+  instruction); all memory and every pixel at every captured frame; the
+  sound against MAME's recording (levels within 3 dB)
 
-To come: the sound in `mame_emu` (E2), `extract` (label `rom`, X1),
-`frame` (label `rom`, C0-C3).
+To come: `extract` (label `rom`, X1), `frame` (label `rom`, C0-C3).
 
 - To debug a difference: `test_emu` with `DUMP_DIR=dir`; `trace_probe.lua`
   with `TRACE_CPU`, `TRACE_FROM`/`TRACE_TO` (needs `-debug -debugger

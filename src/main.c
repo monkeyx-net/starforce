@@ -237,6 +237,7 @@ static void step(const InputFrame *in)
     if (g.show == SHOW_BOARD) {
         panel(in, &g.board.p1, &g.board.p2, &g.board.system);
         board_run_frame(&g.board);
+        audio_stream(g.board.audio, g.board.audio_count, SOUND_RATE); /* the loop runs at the board's rate */
     }
     if (in->gfx_next || in->gfx_glow || in->gfx_scanlines) {
         if (in->gfx_next) gfx_next_preset(&g.gfx);

@@ -44,6 +44,7 @@ add_library(starforce_core STATIC
   src/gfx/starforce.c
   src/emu/z80.c
   src/emu/board.c
+  src/emu/sound.c
 )
 target_include_directories(starforce_core PUBLIC src)
 target_link_libraries(starforce_core PUBLIC m)
