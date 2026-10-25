@@ -49,7 +49,8 @@ cmake -S . -B build && cmake --build build -j     # build
 ctest --test-dir build                            # all tests
 ctest --test-dir build -L rom                     # tests needing the ROM set (roms/starforc.zip)
 ctest --test-dir build -L mame                    # tests needing MAME + the ROM set
-build/starforce --windowed                        # the test card (ROM status, input tester); dev builds find roms/starforc.zip
+build/starforce --windowed                        # the ROM's own code on the emulated board (dev builds find roms/starforc.zip)
+build/starforce --windowed --test-card            # the test card (ROM status, input tester)
 build/starforce --check-rom roms/starforc.zip     # verify a ROM set
 build/starforce --dump-rom roms/starforc.zip [region]  # MAME's regions as hex lines (maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3 sprites dac)
 SDL_VIDEODRIVER=dummy build/starforce --frames 60 --screenshot out.png   # headless screenshot
@@ -61,7 +62,8 @@ mame starforc -rompath roms -verifyroms           # MAME's check of the set
 
 Release builds: `-DSTARFORCE_DEV_ASSETS=OFF` (no source-tree fallbacks).
 Commands for phases not yet done (see the plan's table) arrive with them:
-`--emulate` (E1), `--extract` (X1), the game in C (C0-C3).
+`--extract` (X1), the game in C (C0-C3; `--emulate` then selects the
+board).
 
 ## Layout (`src/`)
 
@@ -80,16 +82,20 @@ arrive with their phases.
   each; pads and keyboard), `audio.c` (streams generated samples)
 - `gfx/` - draws into the framebuffer in arcade coordinates: `fb.c`,
   `blit.c`, `scale.c`, `enhance.c`, `debugfont.c` (from Galaga), and
-  `starforce.c` (E1: a frame from the video RAM: the fg layer, the three
-  scrolling bg layers, the sprites, the palette RAM, the cocktail flip)
+  `starforce.c` (a frame from the video RAM: the fg layer, the three
+  scrolling bg layers, the sprites in their four priorities, the stripes,
+  the palette RAM, the flip; the graphics decoded from the ROM or the
+  assets)
 - `assets/` - `rom.c` (the starforc set from a zip or folder, matched by
   CRC), `zip.c`, `inflate.c`, `png.c`, `assets.c` (asset folder lookup),
   `savefile.c` (the save folder), `extract.c` (X1: tiles, sprites, font,
   DAC waveform, tables, previews; `manifest.txt` written last)
-- `emu/` (E1, E2) - the emulated board: `z80.c` (from Galaga), `z80pio.c`,
-  `z80ctc.c` (with the daisy chain), `board.c` (main and sub, the memory
-  maps, the sound latch, interrupts, MAME's scheduler), `sn76489.c` (the
-  three PSGs), `dac.c` (the waveform DAC and volume filter)
+- `emu/` - the emulated board: `z80.c` (from Galaga, with IM 2's
+  acknowledge and RETI for a daisy chain), `board.c` (main and sub, the
+  memory maps, the sound latch, the PIO and CTC on the sub's daisy chain,
+  interrupts, MAME's scheduler: attosecond time, slices, syncs, Z80s
+  stopping between machine cycles); E2: `sn76489.c` (the three PSGs),
+  `dac.c` (the waveform DAC)
 - `sim/` (C phases) - the game in C: `main_run.c`, `sub_run.c` (each Z80
   program whole, every instruction a case of one resumable function),
   `cpu.h`, `game.c`, `sim.c` (the board's scheduler and devices a frame at
@@ -114,13 +120,22 @@ Every change keeps `ctest` green. Tests arrive with their phase (plan
 section 4). Now:
 
 - `enhance` - always runs (scalers, presets, glow)
+- `z80` - always runs: every opcode's T-states and machine cycles, known
+  flag results, NMI, IM 1, HALT
 - `rom_load` - label `rom`: loads the set from the zip, from renamed
   copies in a folder (CRC matching), and fails cleanly on an empty folder
 - `mame_rom_map` - label `mame`: MAME's view of every region equals
   `starforce --dump-rom`
+- `mame_capture` - label `mame`: runs the scripted game in
+  `src/tests/mame/script.cmake`, dumping RAM, video RAM, sprites,
+  palette, registers, the sub's RAM and the flip with a snapshot at 16
+  frames; each frame drawn from its dump equals MAME's
+- `mame_emu` - label `mame`: the board replays that script from power-on:
+  MAME's traces of frames 1700-1800 (both CPUs, instruction for
+  instruction); all memory and every pixel at every captured frame
 
-To come: `z80` (E1), `mame_capture` and `mame_emu` (label `mame`, E1-E2),
-`extract` (label `rom`, X1), `frame` (label `rom`, C0-C3).
+To come: the sound in `mame_emu` (E2), `extract` (label `rom`, X1),
+`frame` (label `rom`, C0-C3).
 
 - To debug a difference: `test_emu` with `DUMP_DIR=dir`; `trace_probe.lua`
   with `TRACE_CPU`, `TRACE_FROM`/`TRACE_TO` (needs `-debug -debugger

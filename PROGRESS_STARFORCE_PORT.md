@@ -108,31 +108,96 @@ user's `roms/starforc.zip` verifies good):
   (easiest 00 default, easy 08, medium 10, difficult 18, hard 20, hardest
   28; 30 and 38 unused), unknown 40 and 80 (off). Ports P1, P2, SYSTEM.
 
+Confirmed in E1 (`mame_emu`: both Z80s instruction for instruction, cycles
+and registers, over 400 frames from power-on and over the traced frames of
+play; all RAM, the video RAM and registers and every pixel at 16 captured
+frames, power-on to over a minute of play; `mame_capture`):
+- Memory maps (probe of MAME's address maps): main ROM $0000-$7FFF, RAM
+  $8000-$8FFF, fg codes $9000-$93FF and colours $9400-$97FF, sprites
+  $9800-$987F, palette $9C00-$9DFF, registers $9E00-$9E3F, bg3 $A000, bg2
+  $A800, bg1 $B000 (2 KB each), radar $B800-$BBFF; reads $D000 P1, $D001
+  P2, $D002 SYSTEM, $D004 DSW1, $D005 DSW2; writes $D000 the flip (bit 0),
+  $D002 the IRQ's acknowledge, $D004 the sound latch. Sub ROM $0000-$1FFF,
+  RAM $4000-$43FF, writes $8000, $9000, $A000 (the SN76489As), $D000,
+  $E000 (E2); I/O $00-$03 the PIO (bit 0 control, bit 1 port B), $08-$0B
+  the CTC. Unmapped reads give 0.
+- Inputs (MAME's ports, active high): P1 and P2 bit 0 right, 1 left, 2 up,
+  3 down, 4 fire; SYSTEM bit 0 coin 1, 1 coin 2, 2 start 1, 3 start 2.
+  MAME's coins are pulses: the bit reads set for 2 frames whatever the
+  hold. DSW1 default $C0, DSW2 $00.
+- Power-on: time 0 is line 240 (the vertical blank, where frames start).
+  Main runs from $0000 (IM 1); its IRQ is raised at each vertical blank
+  and held until $D002 is written (the handler writes it at line ~260).
+- The sub (IM 2, I = $02, vectors at $0200): the PIO's port A in mode 1
+  (input) with interrupts on, vector $00 ($00B3, reads the latch); port B
+  output, no interrupts. The CTC's vector base $08: channel 0 timer mode,
+  prescale 16, time constant 8 (128 cycles); channel 1 counter mode, time
+  constant 176, counting channel 0's zero counts, interrupting (vector $0A,
+  $00D0: the sound driver's tick, every 22528 sub cycles, 88.8 Hz);
+  channels 2 and 3 timer mode, prescale 256, waiting; the driver reloads
+  channel 2 with prescale 16 and a time constant per note (its zero
+  counts step the DAC). A timer channel's first zero count comes a period
+  after the time constant's write. Daisy chain: the PIO, then the CTC.
+- The sound latch (probes writing $D004 from Lua): every write raises the
+  PIO's interrupt once the sub has caught up (MAME synchronizes it),
+  except the first write since power-on; the PIO's interrupt is pending
+  from power-on (taken at the sub's first EI). Writes before the
+  acknowledge make one interrupt; the sub reads the latch's latest value.
+- MAME's scheduling, which the board copies (as Galaga's): attoseconds
+  (main's cycle 250000000000, sub's 500000000000, the pixel
+  166666666666), slices of 1/60 s (the driver sets no quantum) cut by the
+  timers: the vertical blank (line 240), line 0, the vertical blank's end
+  (line 16), the 50 Hz sound update, each running CTC channel's zero
+  count, and the syncs ($D002, $D004, the sub's interrupt line changes,
+  its acknowledges and RETIs included).
+- Video (`gfx/starforce.c`; probes poking the video RAM with main parked,
+  then `mame_capture` and `mame_emu` on the game's frames): MAME's 256x224
+  turned: screen x = 239 - native y, screen y = native x; native lines
+  16-239 shown.
+  - The palette: a byte a colour, bits 0-1 red, 2-3 green, 4-5 blue, 6-7
+    intensity: a channel is (c x 4 + i) x 17, or 0 where c is 0.
+  - Back to front: the backdrop (palette 0), the stripes, the sprites of
+    priority 0, bg3, sprites 1, bg2, sprites 2, bg1, sprites 3, the fg
+    layer. Pen 0 is transparent everywhere.
+  - Graphics: three bitplanes, a third of the region each, the last third
+    bit 0; rows top to bottom, bit 7 the left pixel; 16x16 tiles four 8x8
+    quarters (top left, top right, bottom left, bottom right).
+  - fg: 32x32 tiles of 8x8, cell = row x 32 + column; colour RAM bits
+    0-2 the colour (palette colour x 8 + pen), bit 4 the code's ninth
+    bit, bit 7 flips the tile top to bottom (bits 3, 5, 6 do nothing
+    seen); each column scrolled up by its byte at $9E00-$9E1F.
+  - bg1/bg2/bg3: 16 tiles across by 128 down of 16x16 (256 x 2048), a
+    byte a tile; bg2 and bg3 colour bits 5-7, bg1 bit 7 then bits 5 and
+    6 (colour = bits 5-6 x 2 + bit 7); bg3's tile the low 7 bits;
+    palettes 64, 128, 192. bg1 and bg2 both scroll by $9E30-$9E31 (down,
+    11 bits) and $9E35 (across); bg3 by $9E20-$9E21 and $9E25. The other
+    bytes do nothing seen.
+  - Sprites: 32 of 4 bytes: code; bits 0-2 colour (palette 320), 4-5
+    priority, 6 flips across, 7 down (native); 256 - native y - size;
+    native x. Codes $C0-$FF are 32x32: four 16x16 from (code & $7F) x 4.
+    The first sprite on top.
+  - The stripes (Senjyo's): unless $9E27 is $FF, palette 384-399 in
+    stripes across the native x, colour (x x 16 / max($9E27 + 1, 16)) &
+    15. Star Force never writes $9E27 and leaves palette 384-399 black.
+  - The radar RAM ($B800) draws yellow pixels in MAME; Star Force never
+    addresses it (not drawn).
+  - $D000 set turns the whole native picture round (x, y to 255 - x, 255
+    - y), the sprites 2 native lines further down.
+
 To confirm by probe (written up here as confirmed):
-- **Memory maps** of both CPUs (MAME's address maps): ROM, RAM, the fg
-  video RAM and colour, the three bg layers' RAM and scroll registers, the
-  sprite RAM, the palette RAM, the inputs and DIP switches, the sound
-  latch, the PIO and CTC ports, the SN76489As' and the DAC's writes, the
-  watchdog if any.
-- **Interrupts:** main's (the vertical blank, IM and vector); sub's daisy
-  chain (PIO, CTC), the CTC channel clocking the DAC's waveform steps.
-- **Video:** the fg layer (8x8, 3 bitplanes), the three bg layers (16x16
-  from `bgtiles1`-`2`, 3 bitplanes; `bgtiles3`'s layout), their scroll and
-  priorities, the sprites (16x16 and 32x32?, 3 bitplanes, flips), the
-  palette RAM's format and weights, the cocktail flip, any star field or
-  radar.
 - **Sound:** the SN76489As' tone, noise and volume as MAME outputs them;
-  the DAC playing `07b.bin` stepped by the CTC, with its volume filter.
+  the DAC playing `07b.bin` stepped by the CTC, `$D000`'s and `$E000`'s
+  part.
 - **High scores:** a table with initials in RAM.
-- **Encryption:** none expected for the parent set (some clones are
-  encrypted: not supported).
+- **The cocktail flip** on MAME's cocktail run (the flip's tile and
+  sprite placement is probed, not yet checked on the game's frames).
 
 ## 3. Phases
 
 | Phase | Work | Exit | Status |
 |---|---|---|---|
 | P0 | `git init`, skeleton from Galaga, loader for the starforc set, test card, MAME ROM map, packaging, CI, `CLAUDE.md`, README | `enhance`, `rom_load`, `mame_rom_map` pass | done 2026-10-25 |
-| E1 | Two Z80s, the PIO and CTC, board (memory maps, latches, interrupts, watchdog), video (fg, three bg layers, sprites, palette RAM); the game plays via `--emulate` (silent) | `z80`; `mame_emu`: both CPUs cycle for cycle over traced frames; RAM and pictures equal at captured frames (`mame_capture`) | not started |
+| E1 | Two Z80s, the PIO and CTC, board (memory maps, latches, interrupts, watchdog), video (fg, three bg layers, sprites, palette RAM); the game plays via `--emulate` (silent) | `z80`; `mame_emu`: both CPUs cycle for cycle over traced frames; RAM and pictures equal at captured frames (`mame_capture`) | done 2026-10-25 (no watchdog found) |
 | E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | not started |
 | X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | not started |
 | C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | not started |
@@ -151,17 +216,19 @@ asking.
   `:sub`, `:fgtiles`, `:bgtiles1`-`3`, `:sprites`, `:dac`) equals
   `starforce --dump-rom`
 - `z80` - always runs: every opcode's T-states and machine cycles, where
-  writes fall, known flag results, NMI, IM 1, IM 2 with the daisy chain,
-  HALT (from Galaga)
+  writes fall, known flag results, NMI, IM 1, HALT (from Galaga; IM 2
+  and the daisy chain are checked by `mame_emu`)
 - `mame_capture` - label `mame`: a scripted game in MAME
   (`src/tests/mame/script.cmake`: power-on, the attract mode, a coin, a
-  start, over a minute of play), dumping RAM, video RAM, the palette and
-  the scroll registers with a snapshot at captured frames; each frame
-  drawn from the dump equals MAME's snapshot
+  start, over a minute of play), dumping RAM, video RAM, sprites, the
+  palette, the registers, the sub's RAM and the flip with a snapshot at
+  16 frames; each frame drawn from the dump equals MAME's snapshot
 - `mame_emu` - label `mame`: the board replays the script from power-on:
-  MAME's traces of both CPUs instruction for instruction (cycle and
-  registers); at every captured frame all RAM and the picture equal
-  MAME's; the sound against MAME's recording of the run (`game.wav`)
+  MAME's traces of frames 1700-1800, both CPUs instruction for
+  instruction (cycle and registers); at every captured frame all RAM
+  (the sub's too), the video RAM and registers, the flip and the picture
+  equal MAME's; the sound against MAME's recording of the run
+  (`game.wav`, E2)
 - `extract` - label `rom`: two extractions are byte-identical and hold
   every file; what is read back is the ROM set's; the font reads the title
   screen the emulated board draws; no manifest without a ROM set

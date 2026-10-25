@@ -41,6 +41,9 @@ add_library(starforce_core STATIC
   src/gfx/scale.c
   src/gfx/enhance.c
   src/gfx/debugfont.c
+  src/gfx/starforce.c
+  src/emu/z80.c
+  src/emu/board.c
 )
 target_include_directories(starforce_core PUBLIC src)
 target_link_libraries(starforce_core PUBLIC m)
@@ -111,6 +114,13 @@ enable_testing()
 add_executable(test_enhance src/tests/test_enhance.c)
 target_link_libraries(test_enhance PRIVATE starforce_core)
 add_test(NAME enhance COMMAND test_enhance)
+add_executable(test_z80 src/tests/test_z80.c)
+target_link_libraries(test_z80 PRIVATE starforce_core)
+add_test(NAME z80 COMMAND test_z80)
+add_executable(test_capture src/tests/test_capture.c)
+target_link_libraries(test_capture PRIVATE starforce_core)
+add_executable(test_emu src/tests/test_emu.c src/tests/script.c)
+target_link_libraries(test_emu PRIVATE starforce_core)
 
 if(EXISTS "${STARFORCE_ROM}")
   add_executable(test_rom src/tests/test_rom.c)
@@ -132,6 +142,16 @@ if(MAME_EXECUTABLE AND EXISTS "${STARFORCE_ROM}")
       -DPROBE=${CMAKE_SOURCE_DIR}/src/tests/mame/rom_map_probe.lua
       -P ${CMAKE_SOURCE_DIR}/src/tests/mame/rom_map.cmake)
   set_tests_properties(mame_rom_map PROPERTIES LABELS mame TIMEOUT 300 RESOURCE_LOCK mame_workdir)
+  add_test(NAME mame_capture
+    COMMAND ${CMAKE_COMMAND} -DMAME=${MAME_EXECUTABLE} -DROMPATH=${rom_parent} -DWORKDIR=${CMAKE_BINARY_DIR}/mame
+      -DROM=${STARFORCE_ROM} -DPROBE=${CMAKE_SOURCE_DIR}/src/tests/mame/capture_probe.lua -DCHECK=$<TARGET_FILE:test_capture>
+      -P ${CMAKE_SOURCE_DIR}/src/tests/mame/capture.cmake)
+  add_test(NAME mame_emu
+    COMMAND ${CMAKE_COMMAND} -DMAME=${MAME_EXECUTABLE} -DROMPATH=${rom_parent} -DWORKDIR=${CMAKE_BINARY_DIR}/mame
+      -DROM=${STARFORCE_ROM} -DPROBE=${CMAKE_SOURCE_DIR}/src/tests/mame/trace_probe.lua -DCHECK=$<TARGET_FILE:test_emu>
+      -P ${CMAKE_SOURCE_DIR}/src/tests/mame/emu.cmake)
+  set_tests_properties(mame_capture PROPERTIES LABELS mame TIMEOUT 600 RESOURCE_LOCK mame_workdir)
+  set_tests_properties(mame_emu PROPERTIES LABELS mame TIMEOUT 1800 RESOURCE_LOCK mame_workdir DEPENDS mame_capture)
   message(STATUS "MAME reference tests enabled (${MAME_EXECUTABLE})")
 else()
   message(STATUS "MAME reference tests disabled (need mame and ${STARFORCE_ROM})")

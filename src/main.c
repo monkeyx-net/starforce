@@ -1,10 +1,12 @@
 /*
  * Star Force native build: SDL setup and the fixed-rate loop (the board's
  * 59.19 Hz). See PROGRESS_STARFORCE_PORT.md.
- * Phase P0: the test card (ROM status, an input tester and the graphics
- * presets); the emulated board and the game in C follow (plan section 3).
+ * With the player's ROM set the ROM's own code runs on the emulated board
+ * (src/emu/), a frame per tick; the game in C follows (plan section 3).
+ * Without it, or with --test-card, the test card (ROM status, an input
+ * tester and the graphics presets).
  *
- *   starforce [--windowed] [--gfx preset] [--rom path] [--test-card]
+ *   starforce [--windowed] [--gfx preset] [--rom path] [--test-card] [--emulate]
  *          [--frames N] [--screenshot out.png]
  *   starforce --check-rom <dir|zip>
  *   starforce --dump-rom <dir|zip> [region]
@@ -24,10 +26,12 @@
 #include "assets/assets.h"
 #include "assets/png.h"
 #include "assets/rom.h"
+#include "emu/board.h"
 #include "gfx/blit.h"
 #include "gfx/debugfont.h"
 #include "gfx/enhance.h"
 #include "gfx/fb.h"
+#include "gfx/starforce.h"
 #include "platform/audio.h"
 #include "platform/input.h"
 #include "platform/video.h"
@@ -41,6 +45,7 @@
 /* Cap catch-up after a stall (suspend/resume, SD card hiccup). */
 #define MAX_STEPS_PER_PRESENT 4
 #define GFX_NOTICE_FRAMES 120
+#define COIN_PULSE_FRAMES 2 /* a coin's switch closes this long (MAME's) */
 
 #define WHITE 0xFFFFFFu
 #define GREY 0x606060u
@@ -64,6 +69,11 @@ typedef struct {
     char rom_error[256];
     char assets_path[1024]; /* the extracted assets, or "" */
     RomSet rom;
+    enum { SHOW_CARD, SHOW_BOARD } show; /* the test card, the emulated board */
+    Board board;
+    SfGfx art;              /* the ROM set's graphics, decoded */
+    int coin_pulse[2];      /* frames left of each coin switch's pulse */
+    bool coin_held[2];
 } Port;
 
 static Port g;
@@ -150,6 +160,39 @@ static void draw_scene(Framebuffer *t)
     centred(t, 236, "CONVERTED BY MONKEYX", GREY);
 }
 
+/* ---- the game ---------------------------------------------------------------- */
+
+/* The port's controls as the cabinet's switches (active high): each coin a
+   pulse when pressed */
+static void panel(const InputFrame *in, uint8_t *p1, uint8_t *p2, uint8_t *sys)
+{
+    uint8_t *p[2] = { p1, p2 };
+    for (int i = 0; i < 2; i++) {
+        const PlayerInput *pi = &in->p[i];
+        *p[i] = (uint8_t)((pi->move_x > 0 ? IN_RIGHT : 0) | (pi->move_x < 0 ? IN_LEFT : 0) |
+                          (pi->move_y < 0 ? IN_UP : 0) | (pi->move_y > 0 ? IN_DOWN : 0) | (pi->fire ? IN_FIRE : 0));
+    }
+    bool coin[2] = { in->coin, in->coin2 };
+    for (int i = 0; i < 2; i++) {
+        if (coin[i] && !g.coin_held[i]) g.coin_pulse[i] = COIN_PULSE_FRAMES;
+        g.coin_held[i] = coin[i];
+    }
+    *sys = (uint8_t)((g.coin_pulse[0] > 0 ? SYS_COIN1 : 0) | (g.coin_pulse[1] > 0 ? SYS_COIN2 : 0) |
+                     (in->start ? SYS_START1 : 0) | (in->start2 ? SYS_START2 : 0));
+    for (int i = 0; i < 2; i++)
+        if (g.coin_pulse[i] > 0) g.coin_pulse[i]--;
+}
+
+/* The game's picture into the arcade framebuffer */
+static void draw_game(Framebuffer *t)
+{
+    static uint32_t screen[SF_W * SF_H];
+    SfFrame fr;
+    sf_frame_from_board(&fr, &g.board);
+    sf_draw(&g.art, &fr, screen);
+    for (int y = 0; y < FB_HEIGHT; y++) memcpy(fb_row(t, y), screen + y * SF_W, SF_W * sizeof screen[0]);
+}
+
 /* Classic: the arcade frame. HD: drawn at the render scale. FILTER: the arcade
    frame upscaled whole. Glow goes over whichever is shown. */
 static void draw(int display_scale)
@@ -158,6 +201,19 @@ static void draw(int display_scale)
     const Scaler scaler = gs->smooth ? SCALER_SMOOTH : SCALER_CRISP;
     const int s = gfx_render_scale(gs, display_scale);
     shown = &fb;
+    if (g.show != SHOW_CARD) { /* only pixels: HD upscales them like FILTER */
+        draw_game(&fb);
+        if (g.gfx_notice > 0) {
+            char text[80];
+            snprintf(text, sizeof text, "GRAPHICS: %s", gfx_describe(&g.gfx));
+            fill_rectf(&fb, 0, FB_HEIGHT - 9, FB_WIDTH, 9, 0x000000);
+            centred(&fb, FB_HEIGHT - 7, text, YELLOW);
+        }
+        if (gs->mode != GFX_CLASSIC && !fb_init(&fb_big, s) && !enhance_filter_frame(&fb, &fb_big, scaler))
+            shown = &fb_big;
+        if (gs->glow) enhance_glow(shown);
+        return;
+    }
     if (gs->mode == GFX_HD && !fb_init(&fb_big, s) && !enhance_prepare(s, scaler)) {
         draw_scene(&fb_big);
         shown = &fb_big;
@@ -178,6 +234,10 @@ static void step(const InputFrame *in)
     if (in->coin2 && !coin2_was) g.coins2++;
     coin_was = in->coin;
     coin2_was = in->coin2;
+    if (g.show == SHOW_BOARD) {
+        panel(in, &g.board.p1, &g.board.p2, &g.board.system);
+        board_run_frame(&g.board);
+    }
     if (in->gfx_next || in->gfx_glow || in->gfx_scanlines) {
         if (in->gfx_next) gfx_next_preset(&g.gfx);
         if (in->gfx_glow) g.gfx.glow = !g.gfx.glow;
@@ -298,7 +358,7 @@ static void web_frame(void) { run_once(); }
 
 int main(int argc, char **argv)
 {
-    bool windowed = false;
+    bool windowed = false, want_card = false;
     const char *rom_arg = NULL;
     if (argc == 3 && !strcmp(argv[1], "--check-rom")) return check_rom(argv[2]);
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--dump-rom")) return dump_rom(argv[2], argc == 4 ? argv[3] : NULL);
@@ -307,7 +367,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) max_frames = strtol(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) screenshot = argv[++i];
         else if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_arg = argv[++i];
-        else if (!strcmp(argv[i], "--test-card")) {} /* the only screen so far */
+        else if (!strcmp(argv[i], "--test-card")) want_card = true;
+        else if (!strcmp(argv[i], "--emulate")) {} /* the only game so far */
         else if (!strcmp(argv[i], "--gfx") && i + 1 < argc) {
             if (gfx_parse(argv[++i], &g.gfx)) {
                 fprintf(stderr, "starforce: unknown --gfx preset '%s' (one of: %s)\n", argv[i], gfx_preset_names());
@@ -315,7 +376,7 @@ int main(int argc, char **argv)
             }
         } else {
             fprintf(stderr,
-                    "usage: %s [--windowed] [--gfx preset] [--rom path] [--test-card]\n"
+                    "usage: %s [--windowed] [--gfx preset] [--rom path] [--test-card] [--emulate]\n"
                     "          [--frames N] [--screenshot out.png]\n"
                     "       %s --check-rom <dir|zip>\n"
                     "       %s --dump-rom <dir|zip> [region]\n",
@@ -333,6 +394,11 @@ int main(int argc, char **argv)
     if (g.rom_path[0] && rom_load(&g.rom, g.rom_path, g.rom_error, sizeof g.rom_error))
         fprintf(stderr, "starforce: %s\n", g.rom_error);
     if (assets_find(argv[0], "manifest.txt", g.assets_path, sizeof g.assets_path)) g.assets_path[0] = '\0';
+    if (g.rom.loaded && !want_card) {
+        g.show = SHOW_BOARD;
+        sf_gfx_from_rom(&g.art, &g.rom);
+        board_init(&g.board, &g.rom);
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
