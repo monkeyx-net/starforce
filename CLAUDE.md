@@ -19,11 +19,9 @@ carrying across (the plan lists some), but ask first.
 
 ## Ground Rules
 
-- **The game is being rewritten in C** (plan decision 6): game logic from
-  the ROM's behaviour, checked frame by frame against the emulated board
-  (`src/emu/`). Until the C phases are done the emulated board is the
-  game; afterwards the C game is the default and `--emulate` runs the
-  board. MAME is the reference for the emulation: changes to `emu/` must
+- **The game is rewritten in C** (plan decision 6): game logic from the
+  ROM's behaviour, checked frame by frame against the emulated board
+  (`src/emu/`). The C game is the default; `--emulate` runs the board. MAME is the reference for the emulation: changes to `emu/` must
   keep the `mame` tests passing. Write all emulation from the hardware's
   behaviour, not from MAME's source.
 - **The ROM set is read once** (plan decision 1): `starforce --extract`
@@ -49,7 +47,8 @@ cmake -S . -B build && cmake --build build -j     # build
 ctest --test-dir build                            # all tests
 ctest --test-dir build -L rom                     # tests needing the ROM set (roms/starforc.zip)
 ctest --test-dir build -L mame                    # tests needing MAME + the ROM set
-build/starforce --windowed                        # the ROM's own code on the emulated board (dev builds find roms/starforc.zip)
+build/starforce --windowed                        # play the game in C (dev builds find build/assets, roms/starforc.zip)
+build/starforce --windowed --emulate              # the ROM's own code on the emulated board
 build/starforce --windowed --test-card            # the test card (ROM status, input tester)
 build/starforce --check-rom roms/starforc.zip     # verify a ROM set
 build/starforce --dump-rom roms/starforc.zip [region]  # MAME's regions as hex lines (maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3 sprites dac)
@@ -62,8 +61,8 @@ mame starforc -rompath roms -verifyroms           # MAME's check of the set
 ```
 
 Release builds: `-DSTARFORCE_DEV_ASSETS=OFF` (no source-tree fallbacks).
-Commands for phases not yet done (see the plan's table) arrive with them:
-the game in C (C0-C3; `--emulate` then selects the board).
+The program runs the game in C from the extracted assets (extracting them
+on the first run when it finds the set), else the test card.
 
 ## Layout (`src/`)
 
@@ -98,10 +97,13 @@ arrive with their phases.
   stopping between machine cycles; the sound's writes timed in the frame),
   `sound.c` (the three SN76489As and the waveform DAC, modelled from
   MAME's output; 811 or 812 samples a frame at 48 kHz)
-- `sim/` (C phases) - the game in C: `main_run.c`, `sub_run.c` (each Z80
-  program whole, every instruction a case of one resumable function),
-  `cpu.h`, `game.c`, `sim.c` (the board's scheduler and devices a frame at
-  a time)
+- `sim/` - the game in C: `main_run.c`, `sub_run.c` (each Z80 program
+  whole, every instruction a case of one resumable function, its cycles,
+  its accesses' machine cycles and F exact), generated from the ROMs'
+  code and read; `cpu.h` (registers, flags, the stops between machine
+  cycles, the sub's I/O and RETI), `game.c` (the board's memory as the
+  two programs see it), `sim.c` (the board's scheduler and devices as
+  `board.c` has them, a frame at a time)
 - `tests/` - C tests, MAME probes (`tests/mame/`)
 - `packaging/` - release layout script, PortMaster launcher and metadata
 - `web/` - page shell for the Emscripten build
@@ -142,7 +144,11 @@ section 4). Now:
   the attract mode's words the emulated board draws; no manifest without a
   ROM set
 
-To come: `frame` (label `rom`, C0-C3).
+- `frame` - label `rom`: the C game against the board from power-on, the
+  tests' player through an attract cycle and games: memory, the flip and
+  the sound equal at every frame (`TEST_FRAME_TRACE` to debug a
+  difference); `frame_long` the same for 40000 frames with player one's
+  ships kept, through the later areas
 
 - To debug a difference: `test_emu` with `DUMP_DIR=dir`; `trace_probe.lua`
   with `TRACE_CPU`, `TRACE_FROM`/`TRACE_TO` (needs `-debug -debugger

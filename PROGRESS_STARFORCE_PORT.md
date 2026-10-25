@@ -223,6 +223,47 @@ probes writing the chips from Lua, both CPUs parked (`emu/sound.c`):
   to `build/assets` after each build; the program extracts on its first
   run with a ROM set (to the save folder when its own is read-only).
 
+### 2.3 The programs (C0-C3, `src/sim/`)
+
+Read from MAME's disassembly (`build/re`, never committed) and the board's
+executed instructions (`build/re/tools/cover.c`: sessions with varied
+switches and inputs, every PC and every computed jump's target). Each
+program is ported whole, as one resumable C function per CPU, every
+instruction a case of its switch (`sim/main_run.c`, `sub_run.c`):
+drafted by Galaga's translator, adapted (`build/re/tools/z80prog.py`,
+never committed), on `sim/cpu.h`, then read. The code is everything
+reachable from the reset and interrupt entries, the jump tables and the
+PCs the board ran (main 7801 instructions, the sub 682); an instruction
+counts its cycles and fetches as the Z80 does, knows the machine cycles
+of its accesses (where a slice can stop it) and sets F whole. The jump
+tables (`jp (hl)` after `rst $08` / `rst $18`): main's $5051 (32, the
+objects' handlers by type, at $1F52 and $2269), $5085 (8, $2289), $5095
+(4, $22C3), $509D (11, types $0F-$19, $1572); the sub's $04B9 (16, the
+sound commands' handlers, $04B8).
+- main: reset $0000 (IM 1) -> $03DF: RAM $8000-$8FFF cleared, $D004
+  written 0, SP $9000, EI; a frame waited ($03C6: bit 6 of $8000, which
+  the IRQ sets), then the set-up ($0409, $04A8, $0522) and the
+  foreground loop ($0401: $3D1D, $091E). IRQ ($0038): the alternate
+  registers, IX and IY kept at $8005; the first time, the palette from
+  $8E14 to $9C00 (256 bytes) and $8F14 to $9D40 (64), the coinage from
+  DSW1 ($0378); then $006A, $1D5F, $0268 (the acknowledge at $D002, the
+  controls from $D000 or $D001 by the player up on the cocktail table,
+  SYSTEM, DSW1 and DSW2 into $8013-$8016), $02E5, $034D (a sound
+  command to $D004). Objects are 20-byte slots, their type in byte 1's
+  bits 0-4. Player one's ships at $8166.
+- sub: reset $0000 -> $0050: RAM $4000-$43FF cleared, $0640, IM 2 with I
+  = $02, the PIO and the CTC set up, the chips quieted ($0025), EI; its
+  loop at $0210 starts a new command ($4000 bit 0, set by the PIO's
+  interrupt at $00B3, which reads the latch into $4001) and plays ten
+  channels of 32 bytes from $4003, writing each to its chip ($8000,
+  $9000, $A000; the DAC through $D000, its volume PSG-style, its pitch
+  as channel 2's time constant at $042F). The CTC's channel 1 interrupt
+  ($00D0) counts the notes' lengths down.
+
+The C game (`sim/sim.c`) runs the two on the board's scheduler and devices
+as `emu/board.c` has them, the abort of a slice inside an interrupt's
+acknowledge included; `frame` checks it against the board at every frame.
+
 To confirm by probe (written up here as confirmed):
 - **High scores:** a table with initials in RAM.
 - **The cocktail flip** on MAME's cocktail run (the flip's tile and
@@ -236,7 +277,7 @@ To confirm by probe (written up here as confirmed):
 | E1 | Two Z80s, the PIO and CTC, board (memory maps, latches, interrupts, watchdog), video (fg, three bg layers, sprites, palette RAM); the game plays via `--emulate` (silent) | `z80`; `mame_emu`: both CPUs cycle for cycle over traced frames; RAM and pictures equal at captured frames (`mame_capture`) | done 2026-10-25 (no watchdog found) |
 | E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | done 2026-10-25 |
 | X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | done 2026-10-25 |
-| C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | not started |
+| C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | done 2026-10-25: the default, equal to the board every frame (memory, sound) from power-on through games, five switch settings and 40000 frames of the later areas |
 | E3/E4 | Polish (cocktail flip, devices, web), the DIP switches' menu, high-score saving, release | device checklist; published | not started |
 
 Each phase gets its own commit. Nothing is pushed or published without
@@ -272,9 +313,11 @@ asking.
   COIN" off the attract mode the emulated board draws, each letter its
   tile's pixels in its colour; no manifest without a ROM set
 - `frame` - label `rom`: the C game and the board from power-on with the
-  tests' player (an attract cycle, then a game to its end): all memory,
-  the latches, the sound chips' registers and the frame's sound equal at
-  every frame
+  tests' player (`tests/player.c`: an attract cycle, then games to their
+  ends, one player, two, the second coin slot; 12000 frames): all
+  memory, the flip and the frame's sound equal at every frame
+- `frame_long` - label `rom`: the same for 40000 frames with player one's
+  ships kept at 3 in both, through the later areas
 
 ## 5. For the sibling ports
 

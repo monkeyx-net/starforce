@@ -46,6 +46,10 @@ add_library(starforce_core STATIC
   src/emu/z80.c
   src/emu/board.c
   src/emu/sound.c
+  src/sim/game.c
+  src/sim/sim.c
+  src/sim/main_run.c
+  src/sim/sub_run.c
 )
 target_include_directories(starforce_core PUBLIC src)
 target_link_libraries(starforce_core PUBLIC m)
@@ -129,6 +133,11 @@ if(EXISTS "${STARFORCE_ROM}")
   target_link_libraries(test_rom PRIVATE starforce_core)
   add_test(NAME rom_load COMMAND test_rom "${STARFORCE_ROM}" "${CMAKE_BINARY_DIR}/rom_test")
   set_tests_properties(rom_load PROPERTIES LABELS rom)
+  add_executable(test_frame src/tests/test_frame.c src/tests/player.c)
+  target_link_libraries(test_frame PRIVATE starforce_core)
+  add_test(NAME frame COMMAND test_frame "${STARFORCE_ROM}")
+  add_test(NAME frame_long COMMAND test_frame "${STARFORCE_ROM}" 40000 C0 00 lives)
+  set_tests_properties(frame frame_long PROPERTIES LABELS rom TIMEOUT 1800)
   add_executable(test_extract src/tests/test_extract.c)
   target_link_libraries(test_extract PRIVATE starforce_core)
   add_test(NAME extract COMMAND test_extract "${STARFORCE_ROM}" "${CMAKE_BINARY_DIR}/extract_test")

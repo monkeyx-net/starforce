@@ -1,10 +1,11 @@
 /*
  * Star Force native build: SDL setup and the fixed-rate loop (the board's
  * 59.19 Hz). See PROGRESS_STARFORCE_PORT.md.
- * With the player's ROM set the ROM's own code runs on the emulated board
- * (src/emu/), a frame per tick; the game in C follows (plan section 3).
- * Without it, or with --test-card, the test card (ROM status, an input
- * tester and the graphics presets).
+ * The game in C (src/sim/) runs a frame per tick from the assets extracted
+ * from the player's set (extracted on the first run when the set is found),
+ * its sound streamed; with --emulate the ROM's own code runs on the
+ * emulated board instead (src/emu/). Without either, or with --test-card,
+ * the test card (ROM status, an input tester and the graphics presets).
  *
  *   starforce [--windowed] [--gfx preset] [--rom path] [--test-card] [--emulate]
  *          [--frames N] [--screenshot out.png]
@@ -39,6 +40,7 @@
 #include "gfx/enhance.h"
 #include "gfx/fb.h"
 #include "gfx/starforce.h"
+#include "sim/sim.h"
 #include "platform/audio.h"
 #include "platform/input.h"
 #include "platform/video.h"
@@ -76,9 +78,12 @@ typedef struct {
     char rom_error[256];
     char assets_path[1024]; /* the extracted assets, or "" */
     RomSet rom;
-    enum { SHOW_CARD, SHOW_BOARD } show; /* the test card, the emulated board */
+    enum { SHOW_CARD, SHOW_GAME, SHOW_BOARD } show; /* the test card, the C game, the board */
     Board board;
-    SfGfx art;              /* the ROM set's graphics, decoded */
+    Sim sim;
+    SfGfx art;              /* the graphics, from the assets (the C game) or the ROM set (the board) */
+    uint8_t data[GAME_DATA_SIZE]; /* the programs' tables, from the assets */
+    uint8_t wave[ROM_DAC_SIZE];   /* the DAC's waveform, from the assets */
     int coin_pulse[2];      /* frames left of each coin switch's pulse */
     bool coin_held[2];
 } Port;
@@ -195,7 +200,12 @@ static void draw_game(Framebuffer *t)
 {
     static uint32_t screen[SF_W * SF_H];
     SfFrame fr;
-    sf_frame_from_board(&fr, &g.board);
+    if (g.show == SHOW_BOARD) {
+        sf_frame_from_board(&fr, &g.board);
+    } else {
+        const Game *m = &g.sim.g;
+        fr = (SfFrame){ m->fgvideo, m->fgcolor, m->sprites, m->palette, m->regs, m->bg1, m->bg2, m->bg3, m->flip };
+    }
     sf_draw(&g.art, &fr, screen);
     for (int y = 0; y < FB_HEIGHT; y++) memcpy(fb_row(t, y), screen + y * SF_W, SF_W * sizeof screen[0]);
 }
@@ -245,6 +255,11 @@ static void step(const InputFrame *in)
         panel(in, &g.board.p1, &g.board.p2, &g.board.system);
         board_run_frame(&g.board);
         audio_stream(g.board.audio, g.board.audio_count, SOUND_RATE); /* the loop runs at the board's rate */
+    } else if (g.show == SHOW_GAME) {
+        uint8_t p1, p2, sys;
+        panel(in, &p1, &p2, &sys);
+        sim_frame(&g.sim, p1, p2, sys);
+        audio_stream(g.sim.audio, g.sim.audio_count, SOUND_RATE);
     }
     if (in->gfx_next || in->gfx_glow || in->gfx_scanlines) {
         if (in->gfx_next) gfx_next_preset(&g.gfx);
@@ -396,7 +411,7 @@ static void web_frame(void) { run_once(); }
 
 int main(int argc, char **argv)
 {
-    bool windowed = false, want_card = false;
+    bool windowed = false, want_card = false, want_board = false;
     const char *rom_arg = NULL;
     if (argc == 3 && !strcmp(argv[1], "--check-rom")) return check_rom(argv[2]);
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--dump-rom")) return dump_rom(argv[2], argc == 4 ? argv[3] : NULL);
@@ -407,7 +422,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) screenshot = argv[++i];
         else if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_arg = argv[++i];
         else if (!strcmp(argv[i], "--test-card")) want_card = true;
-        else if (!strcmp(argv[i], "--emulate")) {} /* the only game so far */
+        else if (!strcmp(argv[i], "--emulate")) want_board = true;
         else if (!strcmp(argv[i], "--gfx") && i + 1 < argc) {
             if (gfx_parse(argv[++i], &g.gfx)) {
                 fprintf(stderr, "starforce: unknown --gfx preset '%s' (one of: %s)\n", argv[i], gfx_preset_names());
@@ -434,7 +449,7 @@ int main(int argc, char **argv)
     if (g.rom_path[0] && rom_load(&g.rom, g.rom_path, g.rom_error, sizeof g.rom_error))
         fprintf(stderr, "starforce: %s\n", g.rom_error);
     if (assets_find(argv[0], "manifest.txt", g.assets_path, sizeof g.assets_path)) g.assets_path[0] = '\0';
-    if (!g.assets_path[0] && g.rom.loaded && !want_card) { /* the first run: extract */
+    if (!g.assets_path[0] && g.rom.loaded && !want_card && !want_board) { /* the first run: extract */
         char err[512];
         default_assets(argv[0], g.assets_path, sizeof g.assets_path);
         if (extract_all(&g.rom, g.assets_path, err, sizeof err)) { /* the program's folder is read-only: the save folder */
@@ -446,10 +461,24 @@ int main(int argc, char **argv)
         }
         if (g.assets_path[0]) printf("starforce: assets extracted to %s\n", g.assets_path);
     }
-    if (g.rom.loaded && !want_card) {
-        g.show = SHOW_BOARD;
-        sf_gfx_from_rom(&g.art, &g.rom);
-        board_init(&g.board, &g.rom);
+    g.show = SHOW_CARD;
+    if (want_board && !want_card) {
+        if (!g.rom.loaded) {
+            fprintf(stderr, "starforce: --emulate needs the ROM set\n");
+        } else {
+            g.show = SHOW_BOARD;
+            sf_gfx_from_rom(&g.art, &g.rom);
+            board_init(&g.board, &g.rom);
+        }
+    } else if (!want_card && g.assets_path[0]) {
+        if (extract_load_tables(g.assets_path, g.data, sizeof g.data) || extract_load_wave(g.assets_path, g.wave) ||
+            extract_load_gfx(g.assets_path, &g.art)) {
+            fprintf(stderr, "starforce: the assets in %s are incomplete: extract them again (--extract)\n", g.assets_path);
+        } else {
+            g.show = SHOW_GAME;
+            sim_init(&g.sim, g.data, DSW1_DEFAULT, DSW2_DEFAULT);
+            sim_sound(&g.sim, g.wave);
+        }
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {

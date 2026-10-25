@@ -46,7 +46,7 @@ void sound_write(Sound *s, int chip, uint8_t v)
     if (chip < 3) sn_write(&s->sn[chip], v);
     else if (chip == 3) s->dac_vol = v & 0x0F;
     else if (chip == 5) {
-        s->dac = s->wave[s->step];
+        s->dac = s->wave ? s->wave[s->step] : 0;
         s->step = (uint8_t)((s->step + 1) & 15);
     }
 }

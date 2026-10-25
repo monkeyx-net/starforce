@@ -40,7 +40,7 @@ typedef struct {
 
 typedef struct {
     Sn76489 sn[3];
-    const uint8_t *wave; /* 07b.bin */
+    const uint8_t *wave; /* 07b.bin (NULL: the DAC holds 0) */
     uint8_t dac, dac_vol, step;
     int64_t tick;        /* the next tick to run, from power-on */
     double sum;          /* the current sample's ticks so far */

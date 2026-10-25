@@ -4,15 +4,14 @@ A C11 / SDL2 port of the 1984 Tehkan arcade game for Linux handhelds
 (PortMaster: ArkOS, ROCKNIX, muOS, Knulli), desktops (Linux, Windows, macOS) and the
 web, checked against the original ROM running in MAME.
 
-**Status:** skeleton. The program loads and checks your ROM set and shows
-a test card. Next: an emulated Star Force board (two Z80s, the Z80 PIO and
-CTC, the scrolling layers and sprites, three SN76489As and the DAC)
-checked against MAME, then the game rewritten in C and checked frame by
-frame against it. See
-[PROGRESS_STARFORCE_PORT.md](PROGRESS_STARFORCE_PORT.md).
+**Status:** the game runs in C, equal frame for frame (pictures and sound)
+to an emulated Star Force board that is itself checked against MAME.
+Next: the DIP switches' menu, high scores, testing on devices and a
+release. See [PROGRESS_STARFORCE_PORT.md](PROGRESS_STARFORCE_PORT.md).
 
 You need your own MAME `starforc` ROM set (`starforc.zip`, the parent
-set); none is included.
+set); none is included. The first run extracts what the game needs from
+it to `assets/` next to the program.
 
 Converted by monkeyx.
 
