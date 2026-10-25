@@ -1,0 +1,245 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GAME_NAME: "starforce"
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # 0. Read version from CHANGELOG.md; skip everything if already released
+  # ---------------------------------------------------------------------------
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      tag:     ${{ steps.read.outputs.tag }}
+      version: ${{ steps.read.outputs.version }}
+      exists:  ${{ steps.read.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check release
+        id: read
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep -m1 '^### ' CHANGELOG.md \
+            | sed -nE 's/^### v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+          if [ -z "${VERSION}" ]; then
+            echo "::error::The first '### ' heading of CHANGELOG.md must be '### vX.Y.Z (date)'."
+            exit 1
+          fi
+          echo "version=${VERSION}"  >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}"     >> $GITHUB_OUTPUT
+          echo "Releasing v${VERSION}"
+
+          CMAKE_VERSION=$(sed -nE 's/^project\(starforce VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          if [ "${CMAKE_VERSION}" != "${VERSION}" ]; then
+            echo "::error::CHANGELOG.md says v${VERSION} but CMakeLists.txt says project(VERSION ${CMAKE_VERSION}). Bump both."
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "push" ] && \
+             gh release view "v${VERSION}" > /dev/null 2>&1; then
+            echo "exists=true"  >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 1. Linux x86_64 and aarch64: tarball + PortMaster zip. Built in Ubuntu 20.04
+  #    (GCC 9, SDL 2.0.10, the PortMaster base) for the handhelds' old glibc.
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: Build Linux (${{ matrix.arch }})
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    container: ubuntu:20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y build-essential cmake pkg-config ccache libsdl2-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Cache CCACHE
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: linux-${{ matrix.arch }}-ccache-${{ github.sha }}
+          restore-keys: |
+            linux-${{ matrix.arch }}-ccache-
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DSTARFORCE_DEV_ASSETS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          cmake --build build -j
+
+      # CI has no ROM set, so only the always-run tests (enhance)
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Package archives
+        run: cmake --build build --target package_linux package_portmaster
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.GAME_NAME }}-Linux-${{ matrix.arch }}
+          path: |
+            build/packages/*.tar.gz
+            build/packages/*.zip
+
+  # ---------------------------------------------------------------------------
+  # 2. Windows x86_64 (MinGW-w64): the only DLL the game needs is SDL2.dll
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Build Windows (x86_64)
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-SDL2
+      # The tests use POSIX calls (setenv, mkdtemp): build the game only
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DSTARFORCE_DEV_ASSETS=OFF
+          cmake --build build --target starforce
+          # Copy every MinGW DLL the exe depends on (SDL2.dll) next to it
+          ldd build/starforce.exe | grep -i '/mingw64/' | awk '{print $3}' | xargs -I{} cp {} build/
+          ls build/*.dll
+      - name: Package archive
+        shell: msys2 {0}
+        run: cmake --build build --target package_windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.GAME_NAME }}-Windows-x86_64
+          path: build/packages/*.zip
+
+  # ---------------------------------------------------------------------------
+  # 3. macOS arm64 (Homebrew SDL2): tarball
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: Build macOS (arm64)
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Install dependencies
+        run: brew install ccache sdl2 pkg-config
+
+      - uses: actions/checkout@v4
+
+      - name: Cache CCACHE
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: macos-arm64-ccache-${{ github.sha }}
+          restore-keys: |
+            macos-arm64-ccache-
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DSTARFORCE_DEV_ASSETS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          cmake --build build -j
+
+      # CI has no ROM set, so only the always-run tests (enhance)
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Package archive
+        run: cmake --build build --target package_macos
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.GAME_NAME }}-macOS-arm64
+          path: build/packages/*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # 4. Web (Emscripten). CI has no ROM set: the build shows the test card.
+  # ---------------------------------------------------------------------------
+  build-web:
+    name: Build Web
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: emscripten-core/setup-emsdk@v14
+      - name: Build
+        run: |
+          emcmake cmake -S . -B build-web
+          cmake --build build-web -j
+      - name: Package archive
+        run: |
+          DIR="${{ env.GAME_NAME }}-${{ needs.version.outputs.version }}-web"
+          cp -r build-web/web "${DIR}"
+          zip -9 -r "${DIR}.zip" "${DIR}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.GAME_NAME }}-Web
+          path: "*.zip"
+
+  # ---------------------------------------------------------------------------
+  # 5. Publish GitHub Release with all artifacts
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [version, build-linux, build-windows, build-macos, build-web]
+    if: github.event_name == 'push' && needs.version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          gh release create "${TAG}" \
+            --target "${{ github.sha }}" \
+            --title "Star Force (native) ${TAG}" \
+            --generate-notes \
+            artifacts/*.tar.gz \
+            artifacts/*.zip

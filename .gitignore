@@ -1,0 +1,17 @@
+# CMake build dirs (build, build-web, build-san, ...)
+/build*/
+
+# arcade ROM sets (user-supplied; never commit or publish)
+/roms/
+*.zip
+
+# extracted assets (made from the user's ROM at run time)
+/assets/
+
+# OS and editor leftovers
+.DS_Store
+.claude/
+.env*
+
+# ad-hoc screenshots in the repo root
+/*.png

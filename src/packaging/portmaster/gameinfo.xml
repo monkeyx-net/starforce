@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gameList>
+  <game>
+    <path>./StarForce.sh</path>
+    <name>Star Force</name>
+    <desc>A native SDL2 rebuild of the 1984 Tehkan arcade game (work in progress). Needs your MAME starforc.zip ROM set in ports/starforce/. Converted by monkeyx.</desc>
+    <releasedate>19840101T000000</releasedate>
+    <developer>Tehkan</developer>
+    <publisher>Tehkan</publisher>
+    <genre>Shooter</genre>
+    <image>./starforce/screenshot.png</image>
+  </game>
+</gameList>
