@@ -92,6 +92,7 @@
 static Framebuffer fb;     /* arcade resolution */
 static Framebuffer fb_big; /* enhanced modes: the frame at the render scale */
 static Framebuffer *shown; /* the frame last drawn */
+static const uint32_t *glow; /* the glow for the GPU to add over it, or NULL (added already, or none) */
 
 typedef struct {
     unsigned long clock;
@@ -527,6 +528,18 @@ static void draw_game(Framebuffer *t)
     for (int y = 0; y < FB_HEIGHT; y++) memcpy(fb_row(t, y), screen + y * SF_W, SF_W * sizeof screen[0]);
 }
 
+/* The glow: computed small here (from `from`, the arcade frame where the
+   shown one is it upscaled), stretched and added by the GPU where it can
+   (headless runs and software renderers add it here, to every pixel) */
+static long max_frames = -1;
+static void add_glow(const GfxSettings *gs, const Framebuffer *from)
+{
+    glow = NULL;
+    if (!gs->glow) return;
+    if (max_frames < 0 && video_gpu_glow()) glow = enhance_glow_grid(from);
+    else enhance_glow(shown);
+}
+
 /* Classic: the arcade frame. HD: drawn at the render scale. FILTER: the arcade
    frame upscaled whole. Glow goes over whichever is shown. */
 static void draw(int display_scale)
@@ -547,7 +560,7 @@ static void draw(int display_scale)
         }
         if (gs->mode != GFX_CLASSIC && !fb_init(&fb_big, s) && !enhance_filter_frame(&fb, &fb_big, scaler))
             shown = &fb_big;
-        if (gs->glow) enhance_glow(shown);
+        add_glow(gs, &fb);
         return;
     }
     if (gs->mode == GFX_HD && !fb_init(&fb_big, s) && !enhance_prepare(s, scaler)) {
@@ -558,7 +571,7 @@ static void draw(int display_scale)
         if (gs->mode == GFX_FILTER && !fb_init(&fb_big, s) && !enhance_filter_frame(&fb, &fb_big, scaler))
             shown = &fb_big;
     }
-    if (gs->glow) enhance_glow(shown);
+    add_glow(gs, shown);
 }
 
 static void step(const InputFrame *in)
@@ -752,13 +765,30 @@ static void apply_script(InputFrame *in, long frame)
 /* ---- loop ----------------------------------------------------------------- */
 
 /* Loop state, static so the browser can run one pass per animation frame. */
-static long max_frames = -1;
 static const char *screenshot;
 static Uint64 step_ticks, last, acc;
 static long frames;
 static int rc;
 
 /* Step for the time elapsed, then draw and present; false = stop. */
+/* STARFORCE_PROFILE=1: the loop's time a frame (the game, drawing with the
+   preset's effects, presenting), averaged and printed every 5 s */
+static int profile;
+static double prof_ms[3];
+static long prof_frames;
+
+static double ms_since(Uint64 t) { return (double)(SDL_GetPerformanceCounter() - t) * 1000.0 / (double)SDL_GetPerformanceFrequency(); }
+
+static void profile_report(void)
+{
+    if (!profile || ++prof_frames < 300) return;
+    fprintf(stderr, "starforce: %s, %s: game %.2f ms, draw %.2f ms, present %.2f ms a frame\n",
+            g.show == SHOW_BOARD ? "board" : g.show == SHOW_GAME ? "C game" : "test card", gfx_describe(&g.gfx),
+            prof_ms[0] / prof_frames, prof_ms[1] / prof_frames, prof_ms[2] / prof_frames);
+    prof_ms[0] = prof_ms[1] = prof_ms[2] = 0;
+    prof_frames = 0;
+}
+
 static bool run_once(void)
 {
     Uint64 now = SDL_GetPerformanceCounter();
@@ -777,7 +807,9 @@ static bool run_once(void)
         if (in.quit) return false; /* a browser tab has nothing to quit to */
 #endif
         if (script_len) apply_script(&in, frames + 1);
+        Uint64 t0 = SDL_GetPerformanceCounter();
         step(&in);
+        prof_ms[0] += ms_since(t0);
         frames++;
         acc -= step_ticks;
         if (max_frames >= 0 && frames >= max_frames) break;
@@ -789,8 +821,13 @@ static bool run_once(void)
 #endif
         return true; /* the last picture stays */
     }
+    Uint64 t1 = SDL_GetPerformanceCounter();
     if (max_frames < 0 || frames >= max_frames) draw(video_display_scale());
-    if (max_frames < 0) video_present(shown, g.gfx.scanlines); /* blocks on vsync */
+    prof_ms[1] += ms_since(t1);
+    t1 = SDL_GetPerformanceCounter();
+    if (max_frames < 0) video_present(shown, g.gfx.scanlines, glow); /* blocks on vsync */
+    prof_ms[2] += ms_since(t1);
+    profile_report();
     if (max_frames >= 0 && frames >= max_frames) {
         if (screenshot && save_screenshot(screenshot)) rc = 1;
         return false;
@@ -805,6 +842,7 @@ static void web_frame(void) { run_once(); }
 int main(int argc, char **argv)
 {
     bool windowed = false, want_card = false, want_board = false;
+    profile = getenv("STARFORCE_PROFILE") && *getenv("STARFORCE_PROFILE") == '1';
     const char *rom_arg = NULL;
     if (argc == 3 && !strcmp(argv[1], "--check-rom")) return check_rom(argv[2]);
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--dump-rom")) return dump_rom(argv[2], argc == 4 ? argv[3] : NULL);

@@ -341,6 +341,14 @@ asking.
 
 ## 5. For the sibling ports
 
+- CPU (2026-10-25, measured with `STARFORCE_PROFILE` and a benchmark): the
+  glow's add-back pass went to the GPU (`enhance_glow_grid`, an
+  accelerated renderer adding the 112x128 grid stretched linearly; the
+  CPU path stays for software renderers and screenshots); `df` in the xBR
+  scaler returns 0 for equal colours (2x 1.7 -> 1.1 ms); 4x and up render
+  at 2x, doubled by the GPU (a second xBR pass cost four times the first).
+  All in the shared `gfx/` and `platform/video.c`: worth carrying across.
+
 - The skeleton came from Galaga's P0 commit with its later scaler and
   main-loop changes (scale.c; sleep when no step is due). The loop's rate
   is now a constant from the board's clocks (`FRAME_HZ`, 59.19 Hz) rather

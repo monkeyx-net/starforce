@@ -29,6 +29,12 @@
 - **High scores kept** — the BEST PLAYERS table and the top score in
   `starforce.hiscore`.
 - **Controls page** — shown over an idle attract mode.
+- **Lower CPU use** — the glow's blur is added by the GPU (stretched
+  linearly, added over the frame) where the renderer is accelerated, from a
+  grid computed on the arcade frame; the smooth scaler skips equal colours;
+  4x displays get the effects rendered at 2x and doubled by the GPU; the
+  game's picture is composed a row at a time. Effects at 4x went from about
+  10 ms a frame to about 1 ms on a desktop.
 
 ### v0.1.0 (unreleased)
 

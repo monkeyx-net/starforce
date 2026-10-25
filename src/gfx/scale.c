@@ -96,6 +96,7 @@ static int iabs(int v) { return v < 0 ? -v : v; }
 /* Colour distance in weighted YUV (xBR's 48:7:6), plus alpha. */
 static int df(uint32_t a, uint32_t b)
 {
+    if (a == b) return 0;
     int dr = (int)(a >> 16 & 0xFF) - (int)(b >> 16 & 0xFF), dg = (int)(a >> 8 & 0xFF) - (int)(b >> 8 & 0xFF);
     int db = (int)(a & 0xFF) - (int)(b & 0xFF), da = (int)(a >> 24) - (int)(b >> 24);
     int y = iabs(299 * dr + 587 * dg + 114 * db), u = iabs(-169 * dr - 331 * dg + 500 * db),

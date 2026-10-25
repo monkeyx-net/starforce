@@ -9,8 +9,9 @@
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
-static SDL_Texture *texture, *scanlines_tex, *target;
+static SDL_Texture *texture, *scanlines_tex, *target, *glow_tex;
 static int tex_w, tex_h, scanlines_scale, target_scale;
+static bool accelerated;
 
 bool video_init(bool windowed)
 {
@@ -26,6 +27,8 @@ bool video_init(bool windowed)
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) /* KMSDRM without GLES, or a dummy driver */
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    SDL_RendererInfo info;
+    accelerated = renderer && !SDL_GetRendererInfo(renderer, &info) && (info.flags & SDL_RENDERER_ACCELERATED);
     if (!renderer) {
         SDL_Log("SDL_CreateRenderer: %s", SDL_GetError());
         return false;
@@ -93,7 +96,24 @@ static SDL_Texture *fit_target(int scale)
     return target;
 }
 
-void video_present(const Framebuffer *fb, bool scanlines)
+bool video_gpu_glow(void) { return accelerated; }
+
+/* The glow's grid as a texture, stretched linearly and added */
+static SDL_Texture *glow_texture(const uint32_t *glow)
+{
+    if (!glow_tex) {
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"); /* linear, read when the texture is made */
+        glow_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING, ENHANCE_GLOW_W,
+                                     ENHANCE_GLOW_H);
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+        if (!glow_tex) return NULL;
+        SDL_SetTextureBlendMode(glow_tex, SDL_BLENDMODE_ADD);
+    }
+    SDL_UpdateTexture(glow_tex, NULL, glow, ENHANCE_GLOW_W * (int)sizeof(uint32_t));
+    return glow_tex;
+}
+
+void video_present(const Framebuffer *fb, bool scanlines, const uint32_t *glow)
 {
     if (!texture || tex_w != fb->w || tex_h != fb->h) {
         if (texture) SDL_DestroyTexture(texture);
@@ -117,10 +137,12 @@ void video_present(const Framebuffer *fb, bool scanlines)
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     int crisp = integer ? (int)fit : (int)fit + 1; /* device pixels per arcade pixel before fitting */
+    SDL_Texture *g = glow ? glow_texture(glow) : NULL;
     SDL_Texture *t = integer ? NULL : fit_target(crisp);
     if (t && !SDL_SetRenderTarget(renderer, t)) {
         SDL_Rect whole = { 0, 0, FB_WIDTH * crisp, FB_HEIGHT * crisp };
         SDL_RenderCopy(renderer, texture, NULL, &whole);
+        if (g) SDL_RenderCopy(renderer, g, NULL, &whole);
         if (scanlines && crisp >= 2) {
             if (scanlines_scale != crisp) build_scanlines(crisp);
             if (scanlines_tex) SDL_RenderCopy(renderer, scanlines_tex, NULL, &whole);
@@ -129,6 +151,7 @@ void video_present(const Framebuffer *fb, bool scanlines)
         SDL_RenderCopy(renderer, t, NULL, &dst);
     } else {
         SDL_RenderCopy(renderer, texture, NULL, &dst);
+        if (g) SDL_RenderCopy(renderer, g, NULL, &dst);
         if (scanlines && crisp >= 2) { /* one output column per arcade column has no room for a scanline */
             if (scanlines_scale != crisp) build_scanlines(crisp);
             if (scanlines_tex) SDL_RenderCopy(renderer, scanlines_tex, NULL, &dst);
@@ -140,11 +163,12 @@ void video_present(const Framebuffer *fb, bool scanlines)
 void video_shutdown(void)
 {
     if (target) SDL_DestroyTexture(target);
+    if (glow_tex) SDL_DestroyTexture(glow_tex);
     if (scanlines_tex) SDL_DestroyTexture(scanlines_tex);
     if (texture) SDL_DestroyTexture(texture);
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window) SDL_DestroyWindow(window);
-    target = scanlines_tex = texture = NULL;
+    target = scanlines_tex = texture = glow_tex = NULL;
     renderer = NULL;
     window = NULL;
     tex_w = tex_h = scanlines_scale = target_scale = 0;

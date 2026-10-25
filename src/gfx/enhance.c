@@ -70,7 +70,9 @@ int gfx_render_scale(const GfxSettings *g, int display_scale)
 {
     if (g->mode == GFX_CLASSIC) return 1;
     int s = display_scale < 2 ? 2 : display_scale;
-    return s > FB_MAX_SCALE ? FB_MAX_SCALE : s;
+    /* 4x and up: rendered at 2x and doubled by the GPU (a second 2x pass
+       costs four times the first, and the upload as much again) */
+    return s >= 4 ? 2 : s;
 }
 
 /* ---- HD assets ------------------------------------------------------------ */
@@ -277,7 +279,8 @@ static void glow_row(int row, uint32_t *out, int w, const int *xi, const int *xw
     }
 }
 
-void enhance_glow(Framebuffer *fb)
+/* The blurred frame on the grid (glow_px), from fb */
+static void glow_grid(const Framebuffer *fb)
 {
     const int cell = fb->scale * GLOW_CELL, n = cell * cell; /* device pixels per grid cell */
     /* average each cell, all three channels per add (n x 255 fits 16 bits) */
@@ -309,7 +312,18 @@ void enhance_glow(Framebuffer *fb)
         for (int x = 0; x < GW; x++)
             glow_px[y][x] = (uint32_t)glow_level(glow_buf[0][y][x]) << 16 |
                             (uint32_t)glow_level(glow_buf[1][y][x]) << 8 | (uint32_t)glow_level(glow_buf[2][y][x]);
+}
 
+const uint32_t *enhance_glow_grid(const Framebuffer *fb)
+{
+    glow_grid(fb);
+    return &glow_px[0][0];
+}
+
+void enhance_glow(Framebuffer *fb)
+{
+    const int cell = fb->scale * GLOW_CELL;
+    glow_grid(fb);
     static int xi[FB_WIDTH * FB_MAX_SCALE], xw[FB_WIDTH * FB_MAX_SCALE];
     static uint32_t rows[2][FB_WIDTH * FB_MAX_SCALE];
     int cached[2] = { -1, -1 };

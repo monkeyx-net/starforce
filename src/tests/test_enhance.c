@@ -107,7 +107,7 @@ static void presets(void)
     CHECK(!gfx_parse("hd-glow-crt", &g) && g.mode == GFX_HD && g.smooth && g.glow && g.scanlines, "hd-glow-crt");
     CHECK(!strcmp(gfx_describe(&g), "HD SMOOTH + GLOW + CRT"), "describe: %s", gfx_describe(&g));
     CHECK(gfx_parse("nope", &g) == -1, "unknown preset accepted");
-    CHECK(gfx_render_scale(&g, 1) == 2 && gfx_render_scale(&g, 3) == 3 && gfx_render_scale(&g, 9) == FB_MAX_SCALE,
+    CHECK(gfx_render_scale(&g, 1) == 2 && gfx_render_scale(&g, 3) == 3 && gfx_render_scale(&g, 4) == 2 && gfx_render_scale(&g, 9) == 2,
           "render scale");
     gfx_parse("classic-crt", &g);
     CHECK(gfx_render_scale(&g, 4) == 1, "classic renders at 1");

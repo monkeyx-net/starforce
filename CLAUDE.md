@@ -54,6 +54,7 @@ build/starforce --check-rom roms/starforc.zip     # verify a ROM set
 build/starforce --dump-rom roms/starforc.zip [region]  # MAME's regions as hex lines (maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3 sprites dac)
 build/starforce --extract roms/starforc.zip [dir] # assets from the ROM set (dev builds: build/assets after each build)
 SDL_VIDEODRIVER=dummy build/starforce --frames 60 --screenshot out.png   # headless screenshot
+STARFORCE_PROFILE=1 build/starforce --windowed    # game, draw and present ms a frame, every 5 s
 cmake --build build --target package_linux package_portmaster   # release archives
 cmake -S . -B build-san -DSTARFORCE_SANITIZE=ON   # ASan/UBSan build
 emcmake cmake -S . -B build-web && cmake --build build-web --target serve   # web build on http://localhost:8000/

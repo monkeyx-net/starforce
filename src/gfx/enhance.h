@@ -32,8 +32,8 @@ int gfx_parse(const char *name, GfxSettings *g);
 /* Preset names for --help, space separated. */
 const char *gfx_preset_names(void);
 
-/* Arcade pixels drawn per device pixel (1 = classic, else 2..FB_MAX_SCALE) given
-   the display's integer scale. */
+/* Arcade pixels drawn per device pixel (1 = classic, else 2 or 3) given the
+   display's integer scale: 4 and up render at 2, doubled by the GPU. */
 int gfx_render_scale(const GfxSettings *g, int display_scale);
 
 typedef struct {
@@ -54,5 +54,13 @@ int enhance_prepare(int factor, Scaler scaler);
 int enhance_filter_frame(const Framebuffer *src, Framebuffer *dst, Scaler scaler);
 /* Bloom: add a blurred copy of the frame onto itself. */
 void enhance_glow(Framebuffer *fb);
+
+/* The glow's blurred frame alone, for the GPU to stretch (linear) and add
+   over fb: ENHANCE_GLOW_W x ENHANCE_GLOW_H, opaque-free packed RGB, each
+   entry the middle of a cell of 2 x 2 arcade pixels (enhance_glow's own
+   taps). Valid until the next call. */
+#define ENHANCE_GLOW_W (FB_WIDTH / 2)
+#define ENHANCE_GLOW_H (FB_HEIGHT / 2)
+const uint32_t *enhance_glow_grid(const Framebuffer *fb);
 
 #endif
