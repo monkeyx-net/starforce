@@ -264,10 +264,27 @@ The C game (`sim/sim.c`) runs the two on the board's scheduler and devices
 as `emu/board.c` has them, the abort of a slice inside an interrupt's
 acknowledge included; `frame` checks it against the board at every frame.
 
+Confirmed in E3:
+- The flip on MAME's cocktail run (`mame_cocktail`: every pixel, player
+  two's turns turned round): the bg layers' scroll across ($9E35, $9E25)
+  goes the other way when flipped (probed: their scroll down and the fg
+  layer's column scroll turn round with the picture).
+- The high scores: the BEST PLAYERS table at $8038 (bit 0: built; ten
+  entries of 11 bytes from $8039: +1-+4 the score in BCD, +5 the area,
+  +6-+8 the initials around a '.', +9-+10 its row's address on the fg
+  layer; then $FF), built by $42C1 the first time the table is shown
+  (frame 1399); the top score at $8348-$834B (BCD, the low byte first),
+  50800 from the ROM at power-on ($03B7, twice: the RAM clear runs
+  meanwhile). The status line is drawn from a ROM template holding 50800
+  ($0545) on each new screen; a beaten top score is drawn by $1ADC (eight
+  digits down column 1 from $9261, leading zeros left out, the digits'
+  tiles at $56BC). The port puts its saved table and top score in once
+  the template is first drawn (frame 165) and before the table is built,
+  draws the top as $1ADC does, and again whenever the template's 50800
+  comes back over it; a game is on while $8018 bit 0 is set.
+
 To confirm by probe (written up here as confirmed):
-- **High scores:** a table with initials in RAM.
-- **The cocktail flip** on MAME's cocktail run (the flip's tile and
-  sprite placement is probed, not yet checked on the game's frames).
+- Nothing open.
 
 ## 3. Phases
 
@@ -278,7 +295,7 @@ To confirm by probe (written up here as confirmed):
 | E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | done 2026-10-25 |
 | X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | done 2026-10-25 |
 | C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | done 2026-10-25: the default, equal to the board every frame (memory, sound) from power-on through games, five switch settings and 40000 frames of the later areas |
-| E3/E4 | Polish (cocktail flip, devices, web), the DIP switches' menu, high-score saving, release | device checklist; published | not started |
+| E3/E4 | Polish (cocktail flip, devices, web), the DIP switches' menu, high-score saving, release | device checklist; published | under way: the flip (`mame_cocktail`), the DIP switches (`starforce.cfg`, the operator menu), the high scores, the controls page; devices and the release to come (nothing published without asking) |
 
 Each phase gets its own commit. Nothing is pushed or published without
 asking.
@@ -318,6 +335,9 @@ asking.
   memory, the flip and the frame's sound equal at every frame
 - `frame_long` - label `rom`: the same for 40000 frames with player one's
   ships kept at 3 in both, through the later areas
+- `mame_cocktail` - label `mame`: MAME on the cocktail table, a 2-player
+  game left alone: the pictures drawn from its dumps equal its snapshots,
+  player two's turns turned round
 
 ## 5. For the sibling ports
 

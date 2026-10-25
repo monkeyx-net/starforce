@@ -70,11 +70,12 @@ What is there after P0; the parts marked (E1), (X1), (C0-C3) and (E3)
 arrive with their phases.
 
 - `main.c` - SDL setup, the fixed-rate loop (59.19 Hz, the board's; it
-  sleeps when no step is due), the graphics pipeline, the test card,
-  `--frames`, `--screenshot`, `--rom`, `--check-rom`, `--dump-rom`; later
-  a frame of the C game or the board (`--emulate`) per tick, the DIP
+  sleeps when no step is due) running a frame of the C game per tick (or
+  of the board, `--emulate`), the graphics pipeline, the test card
+  (`--test-card`, or no ROM set or assets), `--frames`, `--screenshot`,
+  `--input`, `--rom`, `--check-rom`, `--dump-rom`, `--extract`; the DIP
   switches (`starforce.cfg`, the operator menu), the high scores
-  (`starforce.hiscore`), the controls page (E3)
+  (`starforce.hiscore`), the controls page
 - `platform/` - the only code that includes SDL: `video.c` (224x256
   portrait framebuffer, integer scaling or fitted with sharp bilinear,
   scanlines down the screen), `input.c` (two 8-way sticks and a button
@@ -134,6 +135,8 @@ section 4). Now:
   `src/tests/mame/script.cmake`, dumping RAM, video RAM, sprites,
   palette, registers, the sub's RAM and the flip with a snapshot at 16
   frames; each frame drawn from its dump equals MAME's
+- `mame_cocktail` - label `mame`: the same check on a cocktail-table run
+  (player two's turns flipped, `$D000`)
 - `mame_emu` - label `mame`: the board replays that script from power-on:
   MAME's traces of frames 1700-1800 (both CPUs, instruction for
   instruction); all memory and every pixel at every captured frame; the

@@ -5,9 +5,10 @@ A C11 / SDL2 port of the 1984 Tehkan arcade game for Linux handhelds
 web, checked against the original ROM running in MAME.
 
 **Status:** the game runs in C, equal frame for frame (pictures and sound)
-to an emulated Star Force board that is itself checked against MAME.
-Next: the DIP switches' menu, high scores, testing on devices and a
-release. See [PROGRESS_STARFORCE_PORT.md](PROGRESS_STARFORCE_PORT.md).
+to an emulated Star Force board that is itself checked against MAME, with
+the DIP switches (`starforce.cfg` and an operator menu), the BEST PLAYERS
+table kept (`starforce.hiscore`) and the cocktail table's flip. Next:
+testing on devices and a release. See [PROGRESS_STARFORCE_PORT.md](PROGRESS_STARFORCE_PORT.md).
 
 You need your own MAME `starforc` ROM set (`starforc.zip`, the parent
 set); none is included. The first run extracts what the game needs from
@@ -36,6 +37,7 @@ keyboard) drives both, the players taking turns.
 | Next graphics preset | Select + L1 | F3 |
 | Glow on / off | | F4 |
 | CRT scanlines on / off | | F5 |
+| Operator menu (DIP switches) | Select + R1 | F2 |
 | Quit | hold Select + Start for 1 s | Esc |
 
 ## Building

@@ -8,13 +8,17 @@
  * the test card (ROM status, an input tester and the graphics presets).
  *
  *   starforce [--windowed] [--gfx preset] [--rom path] [--test-card] [--emulate]
- *          [--frames N] [--screenshot out.png]
+ *          [--input script.txt] [--frames N] [--screenshot out.png]
  *   starforce --check-rom <dir|zip>
  *   starforce --dump-rom <dir|zip> [region]
  *   starforce --extract <dir|zip> [<asset dir>]
  *
  * --frames N stops after N updates; with --screenshot the last frame is
  * written as a PNG (use SDL_VIDEODRIVER=dummy to run headless).
+ * --input replays scripted controls: lines of "<frame> [coin] [coin2]
+ * [start] [start2] [left] [right] [up] [down] [fire] [menu]" (player
+ * one's), each holding from that frame until the next line ("menu" a press
+ * of F2 on its first frame; live controls still quit).
  * --dump-rom prints "REGION:ADDR BYTE" lines (hex) for every byte of each
  * region (MAME's names: maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3
  * sprites dac), or of the one named: the format the MAME
@@ -55,6 +59,27 @@
 #define MAX_STEPS_PER_PRESENT 4
 #define GFX_NOTICE_FRAMES 120
 #define COIN_PULSE_FRAMES 2 /* a coin's switch closes this long (MAME's) */
+#define SETTINGS_FILE "starforce.cfg"
+#define HISCORE_FILE "starforce.hiscore"
+#define HISCORE_SAVE_FRAMES 300 /* a changed table is written at most every 5 s */
+/* The controls page, shown over the attract mode when nobody has touched the
+   controls for CONTROLS_IDLE_FRAMES; it stays CONTROLS_SHOW_FRAMES and comes
+   back every CONTROLS_IDLE_FRAMES + CONTROLS_SHOW_FRAMES. Any input hides it. */
+#define CONTROLS_IDLE_FRAMES (30 * 60)
+#define CONTROLS_SHOW_FRAMES (10 * 60)
+/* The high scores kept (the arcade forgets them at power-off): the BEST
+   PLAYERS table ($8038: bit 0 built; ten entries of 11 bytes from $8039,
+   then $FF) and the top HI-SCORE ($8348-$834B, BCD, the low byte first),
+   whose eight digits the game writes down the fg layer's column 1 from
+   $9261 (leading zeros left out), each from the ROM's digits at $56BC */
+#define HISCORE_TABLE 0x038 /* in the RAM at $8000 */
+#define HISCORE_TABLE_LEN 112
+#define HISCORE_TOP 0x348
+#define HISCORE_TOP_LEN 4
+#define HISCORE_LEN (HISCORE_TABLE_LEN + HISCORE_TOP_LEN)
+#define HISCORE_DIGITS_AT 0x261 /* in the fg codes */
+#define HISCORE_DIGIT_TILES 0x56BC /* in main's ROM */
+#define FG_BLANK 0x23
 
 #define WHITE 0xFFFFFFu
 #define GREY 0x606060u
@@ -86,6 +111,16 @@ typedef struct {
     uint8_t wave[ROM_DAC_SIZE];   /* the DAC's waveform, from the assets */
     int coin_pulse[2];      /* frames left of each coin switch's pulse */
     bool coin_held[2];
+    uint8_t dsw1, dsw2;     /* the DIP switches (starforce.cfg) */
+    long idle;              /* frames of attract mode without input (the controls page) */
+    uint8_t hiscore[HISCORE_LEN]; /* the high scores as last saved or placed */
+    int hiscore_saved;      /* starforce.hiscore read or written */
+    int hiscore_placed;     /* put into the game's RAM after its power-on */
+    int hiscore_wait;       /* frames the table has differed from the saved one */
+    int menu;               /* the operator menu is open: the game waits */
+    int menu_row;
+    uint8_t menu_dsw1;      /* DSW1 when it opened */
+    InputFrame menu_was;    /* the controls last tick, for the menu's presses */
 } Port;
 
 static Port g;
@@ -195,6 +230,288 @@ static void panel(const InputFrame *in, uint8_t *p1, uint8_t *p2, uint8_t *sys)
         if (g.coin_pulse[i] > 0) g.coin_pulse[i]--;
 }
 
+/* The board's memory, the C game's or the emulated board's */
+static uint8_t *game_ram(void) { return g.show == SHOW_BOARD ? g.board.ram : g.sim.g.ram; }
+static uint8_t *game_fg(void) { return g.show == SHOW_BOARD ? g.board.fgvideo : g.sim.g.fgvideo; }
+/* a byte of main's ROM (the C game's from the assets) */
+static uint8_t game_rom(unsigned a) { return g.show == SHOW_BOARD ? g.rom.main[a] : g.data[a]; }
+/* a game is on ($8018 bit 0) */
+static int game_on(void) { return game_ram()[0x018] & 1; }
+
+/* Power on, with the switches */
+static void power_on(void)
+{
+    if (g.show == SHOW_BOARD) {
+        board_init(&g.board, &g.rom);
+        g.board.dsw1 = g.dsw1;
+        g.board.dsw2 = g.dsw2;
+    } else if (g.show == SHOW_GAME) {
+        sim_init(&g.sim, g.data, g.dsw1, g.dsw2);
+        sim_sound(&g.sim, g.wave);
+    }
+    g.hiscore_placed = 0;
+}
+
+/* The DIP switches (MAME's ports DSW1, DSW2), as MAME's defaults unless
+   starforce.cfg says otherwise. The file is written with the defaults if
+   missing, and again when the operator menu closes. */
+#define DIP_ROWS 7
+
+static const struct {
+    const char *what, *key;
+    int sw, mask, n;            /* DSW1 (0) or DSW2 (1), its bits, its settings */
+    uint8_t values[8];
+    const char *tokens[8];      /* in starforce.cfg */
+    const char *names[8];       /* in the menu */
+} DIPS[DIP_ROWS] = {
+    { "COIN A", "coin_a", 0, 0x03, 4, { 0x01, 0x00, 0x02, 0x03 }, { "2c1c", "1c1c", "1c2c", "1c3c" },
+      { "2 COINS 1 PLAY", "1 COIN 1 PLAY", "1 COIN 2 PLAYS", "1 COIN 3 PLAYS" } },
+    { "COIN B", "coin_b", 0, 0x0C, 4, { 0x04, 0x00, 0x08, 0x0C }, { "2c1c", "1c1c", "1c2c", "1c3c" },
+      { "2 COINS 1 PLAY", "1 COIN 1 PLAY", "1 COIN 2 PLAYS", "1 COIN 3 PLAYS" } },
+    { "SHIPS", "lives", 0, 0x30, 4, { 0x30, 0x00, 0x10, 0x20 }, { "2", "3", "4", "5" }, { "2", "3", "4", "5" } },
+    { "BONUS SHIP", "bonus", 1, 0x07, 8, { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 },
+      { "50k200k500k", "100k300k800k", "50k200k", "100k300k", "50k", "100k", "200k", "none" },
+      { "50K 200K 500K", "100K 300K 800K", "50K AND 200K", "100K AND 300K", "50K ONLY", "100K ONLY", "200K ONLY",
+        "NONE" } },
+    { "DIFFICULTY", "difficulty", 1, 0x38, 6, { 0x00, 0x08, 0x10, 0x18, 0x20, 0x28 },
+      { "easiest", "easy", "medium", "difficult", "hard", "hardest" },
+      { "EASIEST", "EASY", "MEDIUM", "DIFFICULT", "HARD", "HARDEST" } },
+    { "DEMO SOUNDS", "demo_sounds", 0, 0x80, 2, { 0x80, 0x00 }, { "on", "off" }, { "ON", "OFF" } },
+    { "CABINET", "cabinet", 0, 0x40, 2, { 0x40, 0x00 }, { "upright", "cocktail" }, { "UPRIGHT", "COCKTAIL" } },
+};
+
+static int dip_get(int row)
+{
+    uint8_t v = (DIPS[row].sw ? g.dsw2 : g.dsw1) & DIPS[row].mask;
+    for (int i = 0; i < DIPS[row].n; i++)
+        if (DIPS[row].values[i] == v) return i;
+    return 0;
+}
+
+static void dip_set(int row, int i)
+{
+    uint8_t *sw = DIPS[row].sw ? &g.dsw2 : &g.dsw1;
+    *sw = (uint8_t)((*sw & ~DIPS[row].mask) | DIPS[row].values[i]);
+}
+
+static void settings_save(void)
+{
+    char text[1024];
+    int n = snprintf(text, sizeof text,
+                     "# Star Force's DIP switches (MAME's defaults: 1c1c 1c1c 3 50k200k500k easiest on upright;"
+                     " F2 in the game)\n");
+    for (int r = 0; r < DIP_ROWS && n < (int)sizeof text; r++) {
+        n += snprintf(text + n, sizeof text - (size_t)n, "%s %s\n#", DIPS[r].key, DIPS[r].tokens[dip_get(r)]);
+        for (int i = 0; i < DIPS[r].n && n < (int)sizeof text; i++)
+            n += snprintf(text + n, sizeof text - (size_t)n, " %s", DIPS[r].tokens[i]);
+        if (n < (int)sizeof text) n += snprintf(text + n, sizeof text - (size_t)n, "\n");
+    }
+    if (n >= (int)sizeof text) n = (int)sizeof text - 1;
+    if (save_store(SETTINGS_FILE, text, (size_t)n)) fprintf(stderr, "starforce: cannot save %s\n", save_path(SETTINGS_FILE));
+}
+
+static void settings_load(void)
+{
+    g.dsw1 = DSW1_DEFAULT;
+    g.dsw2 = DSW2_DEFAULT;
+    FILE *f = fopen(save_path(SETTINGS_FILE), "r");
+    if (!f) {
+        settings_save();
+        return;
+    }
+    char line[256], key[32], value[32];
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || sscanf(line, "%31s %31s", key, value) != 2) continue;
+        for (int r = 0; r < DIP_ROWS; r++)
+            if (!strcmp(key, DIPS[r].key))
+                for (int i = 0; i < DIPS[r].n; i++)
+                    if (!strcmp(value, DIPS[r].tokens[i])) dip_set(r, i);
+    }
+    fclose(f);
+}
+
+/* ---- the high scores ------------------------------------------------------------ */
+
+/* Main's power-on sets the top score from its ROM (50800, again once its
+   RAM is cleared), draws the status line from a ROM template holding
+   50800 too ($0545, at frame 165), and builds the table the first time it
+   shows it (bit 0 of $8038 clear); the saved table goes in once the
+   template is drawn and before the table is built, its top score at the
+   top, drawn as the game draws it. Without a saved one, the game's own table is taken once built.
+   A changed table is saved (at most every HISCORE_SAVE_FRAMES). */
+static void hiscore_read(uint8_t *out)
+{
+    const uint8_t *ram = game_ram();
+    memcpy(out, ram + HISCORE_TABLE, HISCORE_TABLE_LEN);
+    memcpy(out + HISCORE_TABLE_LEN, ram + HISCORE_TOP, HISCORE_TOP_LEN);
+}
+
+/* the top score's digits as the game writes them */
+static void hiscore_draw_top(void)
+{
+    const uint8_t *top = game_ram() + HISCORE_TOP;
+    uint8_t *fg = game_fg();
+    int started = 0;
+    for (int k = 0; k < 2 * HISCORE_TOP_LEN; k++) {
+        uint8_t byte = top[HISCORE_TOP_LEN - 1 - k / 2];
+        int d = k & 1 ? byte & 15 : byte >> 4;
+        started |= d != 0;
+        fg[HISCORE_DIGITS_AT - 0x20 * k] = started ? game_rom(HISCORE_DIGIT_TILES + (unsigned)d) : FG_BLANK;
+    }
+}
+
+/* the status line shows the template's 50800 */
+static int template_top_shown(void)
+{
+    const uint8_t *fg = game_fg();
+    for (int k = 0; k < 8; k++) {
+        int d = "00050800"[k] - '0';
+        uint8_t want = k < 3 ? FG_BLANK : game_rom(HISCORE_DIGIT_TILES + (unsigned)d);
+        if (fg[HISCORE_DIGITS_AT - 0x20 * k] != want) return 0;
+    }
+    return 1;
+}
+
+static void hiscore_step(void)
+{
+    static const uint8_t rom_top[HISCORE_TOP_LEN] = { 0x00, 0x08, 0x05, 0x00 };
+    uint8_t *ram = game_ram();
+    if (!g.hiscore_placed) {
+        if (g.hiscore_saved) {
+            /* the top score set from the ROM (50800) and the template drawn, the
+               table not built yet */
+            if (memcmp(ram + HISCORE_TOP, rom_top, HISCORE_TOP_LEN) || (ram[HISCORE_TABLE] & 1) || !template_top_shown())
+                return;
+            memcpy(ram + HISCORE_TABLE, g.hiscore, HISCORE_TABLE_LEN);
+            memcpy(ram + HISCORE_TOP, g.hiscore + HISCORE_TABLE_LEN, HISCORE_TOP_LEN);
+            hiscore_draw_top();
+        } else {
+            if (!(ram[HISCORE_TABLE] & 1)) return;
+            hiscore_read(g.hiscore);
+        }
+        g.hiscore_placed = 1;
+        return;
+    }
+    /* the game draws the template again on each new screen: the top score
+       it holds over it */
+    if (memcmp(ram + HISCORE_TOP, rom_top, HISCORE_TOP_LEN) && template_top_shown()) hiscore_draw_top();
+    uint8_t now[HISCORE_LEN];
+    hiscore_read(now);
+    if (!memcmp(now, g.hiscore, HISCORE_LEN)) {
+        g.hiscore_wait = 0;
+        return;
+    }
+    if (++g.hiscore_wait < HISCORE_SAVE_FRAMES) return;
+    memcpy(g.hiscore, now, HISCORE_LEN);
+    g.hiscore_saved = 1;
+    g.hiscore_wait = 0;
+    if (save_store(HISCORE_FILE, g.hiscore, HISCORE_LEN)) fprintf(stderr, "starforce: cannot save %s\n", save_path(HISCORE_FILE));
+}
+
+/* ---- the operator menu: the DIP switches ------------------------------------------------------- */
+
+/* F2 or Select+R1 opens it over the game, which waits; up/down choose a
+   switch, left/right (or fire) change it, F2 or Select+R1 again saves
+   starforce.cfg and goes on. The game reads the switches as the board
+   does; it reads the coinage only at power-on, so a new coinage powers the
+   game on again. */
+static void menu_step(const InputFrame *in)
+{
+    const InputFrame *was = &g.menu_was;
+    if (in->move_y && in->move_y != was->move_y) g.menu_row = (g.menu_row + in->move_y + DIP_ROWS) % DIP_ROWS;
+    int dx = in->move_x && in->move_x != was->move_x ? in->move_x : 0;
+    bool fire = in->p[0].fire || in->p[1].fire, fire_was = was->p[0].fire || was->p[1].fire;
+    if (fire && !fire_was) dx = 1;
+    if (dx) {
+        int n = DIPS[g.menu_row].n;
+        dip_set(g.menu_row, (dip_get(g.menu_row) + dx + n) % n);
+    }
+    g.menu_was = *in;
+}
+
+static void menu_close(void)
+{
+    settings_save();
+    if ((g.dsw1 & 0x0F) != (g.menu_dsw1 & 0x0F)) {
+        power_on();
+        return;
+    }
+    if (g.show == SHOW_BOARD) {
+        g.board.dsw1 = g.dsw1;
+        g.board.dsw2 = g.dsw2;
+    } else {
+        g.sim.g.dsw1 = g.dsw1;
+        g.sim.g.dsw2 = g.dsw2;
+    }
+}
+
+static void draw_menu(Framebuffer *t)
+{
+    const int x0 = 4, y0 = 44, w = FB_WIDTH - 8, h = 160;
+    fill_rectf(t, x0, y0, w, h, 0x000000);
+    fill_rectf(t, x0, y0, w, 1, ORANGE);
+    fill_rectf(t, x0, y0 + h - 1, w, 1, ORANGE);
+    centred(t, y0 + 8, "STAR FORCE  -  OPERATOR MENU", YELLOW);
+    int y = y0 + 26;
+    for (int r = 0; r < DIP_ROWS; r++, y += 12) {
+        int on = r == g.menu_row;
+        if (on) debug_text(t, x0 + 4, y, ">", YELLOW);
+        debug_text(t, x0 + 12, y, DIPS[r].what, on ? YELLOW : WHITE);
+        debug_text(t, x0 + 76, y, DIPS[r].names[dip_get(r)], on ? YELLOW : GREEN);
+    }
+    centred(t, y0 + h - 40, "UP/DOWN CHOOSE   LEFT/RIGHT CHANGE", GREY);
+    centred(t, y0 + h - 30, "A NEW COINAGE STARTS THE GAME AGAIN", GREY);
+    centred(t, y0 + h - 14, "F2 / SELECT+R1: SAVE AND PLAY", CYAN);
+}
+
+/* ---- the controls page ---------------------------------------------------------- */
+
+static bool any_input(const InputFrame *in)
+{
+    for (int i = 0; i < 2; i++)
+        if (in->p[i].move_x || in->p[i].move_y || in->p[i].fire) return true;
+    return in->coin || in->coin2 || in->start || in->start2;
+}
+
+static bool controls_page_up(void)
+{
+    if (g.show == SHOW_CARD || g.menu || g.idle < CONTROLS_IDLE_FRAMES) return false;
+    return (g.idle - CONTROLS_IDLE_FRAMES) % (CONTROLS_IDLE_FRAMES + CONTROLS_SHOW_FRAMES) < CONTROLS_SHOW_FRAMES;
+}
+
+static const struct { const char *what, *pad, *keys; } CONTROLS[] = {
+    { "MOVE", "STICK, D-PAD", "ARROWS" },
+    { "FIRE", "A, B", "SPACE, CTRL" },
+    { "COIN", "SELECT", "5 (6)" },
+    { "1 PLAYER", "START", "1, ENTER" },
+    { "2 PLAYERS", "L1+START", "2" },
+    { "GRAPHICS", "SELECT+L1", "F3" },
+    { "GLOW, CRT", "", "F4, F5" },
+    { "OPERATOR MENU", "SELECT+R1", "F2" },
+    { "EXIT", "SELECT+START", "ESC" },
+};
+
+/* Over the game's frame (cosmetic: the next frame is the arcade's again). */
+static void draw_controls(Framebuffer *t)
+{
+    const int x0 = 8, y0 = 50, w = FB_WIDTH - 16, h = 150;
+    fill_rectf_alpha(t, x0, y0, w, h, 0x000000, 0.94);
+    fill_rectf(t, x0, y0, w, 1, ORANGE);
+    fill_rectf(t, x0, y0 + h - 1, w, 1, ORANGE);
+    centred(t, y0 + 8, "STAR FORCE  -  CONTROLS", YELLOW);
+    int y = y0 + 22;
+    debug_text(t, x0 + 74, y, "PAD", CYAN);
+    debug_text(t, x0 + 140, y, "KEYBOARD", CYAN);
+    y += 12;
+    for (size_t i = 0; i < sizeof CONTROLS / sizeof CONTROLS[0]; i++, y += 9) {
+        debug_text(t, x0 + 6, y, CONTROLS[i].what, WHITE);
+        debug_text(t, x0 + 74, y, CONTROLS[i].pad, GREEN);
+        debug_text(t, x0 + 140, y, CONTROLS[i].keys, GREEN);
+    }
+    centred(t, y0 + h - 26, "TWO PADS: ONE A PLAYER", GREY);
+    centred(t, y0 + h - 12, "CONVERTED BY MONKEYX", CYAN);
+}
+
 /* The game's picture into the arcade framebuffer */
 static void draw_game(Framebuffer *t)
 {
@@ -220,6 +537,8 @@ static void draw(int display_scale)
     shown = &fb;
     if (g.show != SHOW_CARD) { /* only pixels: HD upscales them like FILTER */
         draw_game(&fb);
+        if (controls_page_up()) draw_controls(&fb);
+        if (g.menu) draw_menu(&fb);
         if (g.gfx_notice > 0) {
             char text[80];
             snprintf(text, sizeof text, "GRAPHICS: %s", gfx_describe(&g.gfx));
@@ -251,7 +570,17 @@ static void step(const InputFrame *in)
     if (in->coin2 && !coin2_was) g.coins2++;
     coin_was = in->coin;
     coin2_was = in->coin2;
-    if (g.show == SHOW_BOARD) {
+    if (in->menu && g.show != SHOW_CARD) {
+        if (g.menu) menu_close();
+        else g.menu_dsw1 = g.dsw1;
+        g.menu = !g.menu;
+        g.menu_was = *in;
+    }
+    if (g.menu) { /* the game waits */
+        static const int16_t quiet[811];
+        menu_step(in);
+        if (g.show != SHOW_CARD) audio_stream(quiet, 811, SOUND_RATE);
+    } else if (g.show == SHOW_BOARD) {
         panel(in, &g.board.p1, &g.board.p2, &g.board.system);
         board_run_frame(&g.board);
         audio_stream(g.board.audio, g.board.audio_count, SOUND_RATE); /* the loop runs at the board's rate */
@@ -260,6 +589,10 @@ static void step(const InputFrame *in)
         panel(in, &p1, &p2, &sys);
         sim_frame(&g.sim, p1, p2, sys);
         audio_stream(g.sim.audio, g.sim.audio_count, SOUND_RATE);
+    }
+    if (g.show != SHOW_CARD && !g.menu) {
+        hiscore_step();
+        g.idle = game_on() || any_input(in) ? 0 : g.idle + 1;
     }
     if (in->gfx_next || in->gfx_glow || in->gfx_scanlines) {
         if (in->gfx_next) gfx_next_preset(&g.gfx);
@@ -357,6 +690,65 @@ static int save_screenshot(const char *path)
     return 0;
 }
 
+/* ---- scripted input ------------------------------------------------------- */
+
+typedef struct {
+    long frame;
+    InputFrame in;
+} ScriptLine;
+
+static ScriptLine script[4096];
+static int script_len, script_pos;
+
+static int load_script(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "starforce: cannot open %s\n", path);
+        return -1;
+    }
+    char line[256];
+    while (script_len < (int)(sizeof script / sizeof script[0]) && fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        ScriptLine *l = &script[script_len];
+        memset(l, 0, sizeof *l);
+        char *tok = strtok(line, " \t\n");
+        if (!tok) continue;
+        l->frame = strtol(tok, NULL, 10);
+        PlayerInput *p = &l->in.p[0];
+        while ((tok = strtok(NULL, " \t\n"))) {
+            if (!strcmp(tok, "coin")) l->in.coin = true;
+            else if (!strcmp(tok, "coin2")) l->in.coin2 = true;
+            else if (!strcmp(tok, "start")) l->in.start = true;
+            else if (!strcmp(tok, "start2")) l->in.start2 = true;
+            else if (!strcmp(tok, "left")) p->move_x = -1;
+            else if (!strcmp(tok, "right")) p->move_x = 1;
+            else if (!strcmp(tok, "up")) p->move_y = -1;
+            else if (!strcmp(tok, "down")) p->move_y = 1;
+            else if (!strcmp(tok, "fire")) p->fire = true;
+            else if (!strcmp(tok, "menu")) l->in.menu = true;
+            else fprintf(stderr, "starforce: %s: unknown token '%s'\n", path, tok);
+        }
+        l->in.p[1] = *p;
+        l->in.move_x = p->move_x;
+        l->in.move_y = p->move_y;
+        script_len++;
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Replace live controls with the script line in force at `frame` (quit stays live). */
+static void apply_script(InputFrame *in, long frame)
+{
+    while (script_pos + 1 < script_len && script[script_pos + 1].frame <= frame) script_pos++;
+    bool quit = in->quit;
+    if (script[script_pos].frame <= frame) *in = script[script_pos].in;
+    else memset(in, 0, sizeof *in);
+    in->menu = in->menu && script[script_pos].frame == frame; /* a press, on the line's first frame */
+    in->quit = quit;
+}
+
 /* ---- loop ----------------------------------------------------------------- */
 
 /* Loop state, static so the browser can run one pass per animation frame. */
@@ -384,6 +776,7 @@ static bool run_once(void)
 #ifndef __EMSCRIPTEN__
         if (in.quit) return false; /* a browser tab has nothing to quit to */
 #endif
+        if (script_len) apply_script(&in, frames + 1);
         step(&in);
         frames++;
         acc -= step_ticks;
@@ -423,6 +816,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_arg = argv[++i];
         else if (!strcmp(argv[i], "--test-card")) want_card = true;
         else if (!strcmp(argv[i], "--emulate")) want_board = true;
+        else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
+            if (load_script(argv[++i])) return 2;
+        }
         else if (!strcmp(argv[i], "--gfx") && i + 1 < argc) {
             if (gfx_parse(argv[++i], &g.gfx)) {
                 fprintf(stderr, "starforce: unknown --gfx preset '%s' (one of: %s)\n", argv[i], gfx_preset_names());
@@ -431,7 +827,7 @@ int main(int argc, char **argv)
         } else {
             fprintf(stderr,
                     "usage: %s [--windowed] [--gfx preset] [--rom path] [--test-card] [--emulate]\n"
-                    "          [--frames N] [--screenshot out.png]\n"
+                    "          [--input script.txt] [--frames N] [--screenshot out.png]\n"
                     "       %s --check-rom <dir|zip>\n"
                     "       %s --dump-rom <dir|zip> [region]\n"
                     "       %s --extract <dir|zip> [<asset dir>]\n",
@@ -468,7 +864,6 @@ int main(int argc, char **argv)
         } else {
             g.show = SHOW_BOARD;
             sf_gfx_from_rom(&g.art, &g.rom);
-            board_init(&g.board, &g.rom);
         }
     } else if (!want_card && g.assets_path[0]) {
         if (extract_load_tables(g.assets_path, g.data, sizeof g.data) || extract_load_wave(g.assets_path, g.wave) ||
@@ -476,9 +871,12 @@ int main(int argc, char **argv)
             fprintf(stderr, "starforce: the assets in %s are incomplete: extract them again (--extract)\n", g.assets_path);
         } else {
             g.show = SHOW_GAME;
-            sim_init(&g.sim, g.data, DSW1_DEFAULT, DSW2_DEFAULT);
-            sim_sound(&g.sim, g.wave);
         }
+    }
+    if (g.show != SHOW_CARD) {
+        settings_load();
+        g.hiscore_saved = !save_load(HISCORE_FILE, g.hiscore, sizeof g.hiscore);
+        power_on();
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {

@@ -227,17 +227,18 @@ int extract_load_gfx(const char *dir, SfGfx *g)
 }
 
 /* The game's characters: its messages in ASCII (a space $20); its status
-   line's own, PLAYER, HI-SCORE and the digits from $0C (its 8 and 9 are
-   $20 and $21: $20 left the space, the messages' colours hiding its 8) */
+   line's own, PLAYER, HI-SCORE and the digits from $0C (0-7 $18-$1F, 8 and
+   9 $21 and $22) */
 static int extract_font(const char *dir, char *err, int errlen)
 {
-    static const char status[] = "PLAYERHI-SCO01234567";
+    static const char status[] = "PLAYERHI-SCO01234567 89";
     Text t = {0};
     put(&t, "# the game's characters: fg tile, character\n");
     for (int c = '0'; c <= '9'; c++) put(&t, "%02X %c\n", c, c);
     for (int c = 'A'; c <= 'Z'; c++) put(&t, "%02X %c\n", c, c);
     put(&t, "20 space\n");
-    for (int i = 0; status[i]; i++) put(&t, "%02X %c\n", 0x0C + i, status[i]);
+    for (int i = 0; status[i]; i++)
+        if (status[i] != ' ') put(&t, "%02X %c\n", 0x0C + i, status[i]);
     char gfx_dir[1100];
     snprintf(gfx_dir, sizeof gfx_dir, "%s/gfx", dir);
     return write_text(gfx_dir, "font.txt", &t, err, errlen);

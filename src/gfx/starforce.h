@@ -21,7 +21,8 @@
  *   ($9E27 + 1) / 16 pixels wide.
  * - the palette: a byte a colour, 2 bits each of red, green, blue and a
  *   shared intensity: (c x 4 + i) x 17, 0 where c is 0.
- * - $D000 set turns the picture round (the sprites 2 pixels further down).
+ * - $D000 set turns the picture round (the sprites 2 pixels further down;
+ *   the bg layers' scroll across, $9E35 and $9E25, the other way).
  * The graphics come decoded (sf_gfx_from_rom, or the extracted assets), a
  * pen per pixel in native order.
  */

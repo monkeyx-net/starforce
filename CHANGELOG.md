@@ -3,6 +3,33 @@
 ---
 ## Changelog
 
+### v0.1.1 (2026-10-25)
+
+#### Game
+
+- **The emulated board** — the main and sound Z80s, the PIO and CTC on the
+  sound CPU's daisy chain, the three background layers, foreground and
+  sprites, MAME's scheduler, checked against MAME 0.289 instruction for
+  instruction (`--emulate`); the three SN76489As and the waveform DAC
+  modelled from MAME's output.
+- **Assets extracted once** — the tiles, sprites, font, the DAC's waveform
+  and the programs' tables from the player's `starforc.zip` (`--extract`,
+  or on the first run; to the save folder when the program's is
+  read-only).
+- **The game in C by default** — both Z80 programs rewritten in C on the
+  board's scheduler: memory and sound equal to the emulated board's at
+  every frame. It needs only the extracted assets.
+- **Cocktail table** — player two's turns turned round as MAME draws them.
+
+#### Port
+
+- **Operator menu** — F2 (Select+R1 on a pad) opens the DIP switches over
+  the game, which waits: both coin slots, ships, bonus ship, difficulty,
+  demo sounds, cabinet; saved to `starforce.cfg`.
+- **High scores kept** — the BEST PLAYERS table and the top score in
+  `starforce.hiscore`.
+- **Controls page** — shown over an idle attract mode.
+
 ### v0.1.0 (unreleased)
 
 #### Port

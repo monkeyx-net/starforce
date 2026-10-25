@@ -70,10 +70,12 @@ static void draw_sprites(const SfGfx *g, const SfFrame *f)
     }
 }
 
-/* a bg layer's pen at native (x, y), or 0 */
-static int bg_pixel(const uint8_t (*tiles)[256], const uint8_t *ram, int layer, int x, int y, int sx, int sy, int *colour)
+/* a bg layer's pen at native (x, y) before the flip, or 0; flipped, its
+   scroll across goes the other way (MAME's) */
+static int bg_pixel(const uint8_t (*tiles)[256], const uint8_t *ram, int layer, int x, int y, int sx, int sy, int flip,
+                    int *colour)
 {
-    int mx = (x + sx) & 255, my = (y + sy) & 2047;
+    int mx = (flip ? x - sx : x + sx) & 255, my = (y + sy) & 2047;
     int code = ram[(my >> 4) * 16 + (mx >> 4)];
     int c = layer == 1 ? (code >> 4 & 6) | code >> 7 : code >> 5;
     int tile = layer == 3 ? code & 0x7F : code;
@@ -100,11 +102,11 @@ void sf_draw(const SfGfx *g, const SfFrame *f, uint32_t *screen)
                 v = (uint16_t)(384 + (x * 16 / w & 15));
             }
             if (spr_layer[0][y][x] != NONE) v = spr_layer[0][y][x];
-            if ((pen = bg_pixel(g->bg3, f->bg3, 3, x, y, sx3, sy3, &c))) v = (uint16_t)(192 + c * 8 + pen);
+            if ((pen = bg_pixel(g->bg3, f->bg3, 3, x, y, sx3, sy3, f->flip, &c))) v = (uint16_t)(192 + c * 8 + pen);
             if (spr_layer[1][y][x] != NONE) v = spr_layer[1][y][x];
-            if ((pen = bg_pixel(g->bg2, f->bg2, 2, x, y, sx1, sy1, &c))) v = (uint16_t)(128 + c * 8 + pen);
+            if ((pen = bg_pixel(g->bg2, f->bg2, 2, x, y, sx1, sy1, f->flip, &c))) v = (uint16_t)(128 + c * 8 + pen);
             if (spr_layer[2][y][x] != NONE) v = spr_layer[2][y][x];
-            if ((pen = bg_pixel(g->bg1, f->bg1, 1, x, y, sx1, sy1, &c))) v = (uint16_t)(64 + c * 8 + pen);
+            if ((pen = bg_pixel(g->bg1, f->bg1, 1, x, y, sx1, sy1, f->flip, &c))) v = (uint16_t)(64 + c * 8 + pen);
             if (spr_layer[3][y][x] != NONE) v = spr_layer[3][y][x];
             int col = x >> 3, my = (y + f->regs[col]) & 255;
             int cell = (my >> 3) * 32 + col, attr = f->fgcolor[cell];
