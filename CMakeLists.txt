@@ -36,6 +36,7 @@ add_library(starforce_core STATIC
   src/assets/rom.c
   src/assets/assets.c
   src/assets/savefile.c
+  src/assets/extract.c
   src/gfx/fb.c
   src/gfx/blit.c
   src/gfx/scale.c
@@ -128,6 +129,18 @@ if(EXISTS "${STARFORCE_ROM}")
   target_link_libraries(test_rom PRIVATE starforce_core)
   add_test(NAME rom_load COMMAND test_rom "${STARFORCE_ROM}" "${CMAKE_BINARY_DIR}/rom_test")
   set_tests_properties(rom_load PROPERTIES LABELS rom)
+  add_executable(test_extract src/tests/test_extract.c)
+  target_link_libraries(test_extract PRIVATE starforce_core)
+  add_test(NAME extract COMMAND test_extract "${STARFORCE_ROM}" "${CMAKE_BINARY_DIR}/extract_test")
+  set_tests_properties(extract PROPERTIES LABELS rom)
+  # Development builds extract the assets next to the program after each build.
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/assets/manifest.txt"
+      COMMAND starforce --extract "${STARFORCE_ROM}" "${CMAKE_BINARY_DIR}/assets"
+      DEPENDS starforce
+      COMMENT "Extracting assets from ${STARFORCE_ROM}")
+    add_custom_target(assets ALL DEPENDS "${CMAKE_BINARY_DIR}/assets/manifest.txt")
+  endif()
   message(STATUS "ROM set found at ${STARFORCE_ROM}: ROM tests enabled")
 else()
   message(STATUS "No ROM set at ${STARFORCE_ROM}: ROM tests disabled (put starforc.zip in roms/)")

@@ -53,6 +53,7 @@ build/starforce --windowed                        # the ROM's own code on the em
 build/starforce --windowed --test-card            # the test card (ROM status, input tester)
 build/starforce --check-rom roms/starforc.zip     # verify a ROM set
 build/starforce --dump-rom roms/starforc.zip [region]  # MAME's regions as hex lines (maincpu sub fgtiles bgtiles1 bgtiles2 bgtiles3 sprites dac)
+build/starforce --extract roms/starforc.zip [dir] # assets from the ROM set (dev builds: build/assets after each build)
 SDL_VIDEODRIVER=dummy build/starforce --frames 60 --screenshot out.png   # headless screenshot
 cmake --build build --target package_linux package_portmaster   # release archives
 cmake -S . -B build-san -DSTARFORCE_SANITIZE=ON   # ASan/UBSan build
@@ -62,8 +63,7 @@ mame starforc -rompath roms -verifyroms           # MAME's check of the set
 
 Release builds: `-DSTARFORCE_DEV_ASSETS=OFF` (no source-tree fallbacks).
 Commands for phases not yet done (see the plan's table) arrive with them:
-`--extract` (X1), the game in C (C0-C3; `--emulate` then selects the
-board).
+the game in C (C0-C3; `--emulate` then selects the board).
 
 ## Layout (`src/`)
 
@@ -88,8 +88,9 @@ arrive with their phases.
   assets)
 - `assets/` - `rom.c` (the starforc set from a zip or folder, matched by
   CRC), `zip.c`, `inflate.c`, `png.c`, `assets.c` (asset folder lookup),
-  `savefile.c` (the save folder), `extract.c` (X1: tiles, sprites, font,
-  DAC waveform, tables, previews; `manifest.txt` written last)
+  `savefile.c` (the save folder), `extract.c` (tiles, sprites, font, DAC
+  waveform, tables, previews; `manifest.txt` written last; and their
+  loaders)
 - `emu/` - the emulated board: `z80.c` (from Galaga, with IM 2's
   acknowledge and RETI for a daisy chain), `board.c` (main and sub, the
   memory maps, the sound latch, the PIO and CTC on the sub's daisy chain,
@@ -136,7 +137,12 @@ section 4). Now:
   instruction); all memory and every pixel at every captured frame; the
   sound against MAME's recording (levels within 3 dB)
 
-To come: `extract` (label `rom`, X1), `frame` (label `rom`, C0-C3).
+- `extract` - label `rom`: two extractions are byte-identical; what is
+  read back (graphics, waveform, tables) is the ROM set's; the font reads
+  the attract mode's words the emulated board draws; no manifest without a
+  ROM set
+
+To come: `frame` (label `rom`, C0-C3).
 
 - To debug a difference: `test_emu` with `DUMP_DIR=dir`; `trace_probe.lua`
   with `TRACE_CPU`, `TRACE_FROM`/`TRACE_TO` (needs `-debug -debugger

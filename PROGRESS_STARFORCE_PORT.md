@@ -207,6 +207,22 @@ probes writing the chips from Lua, both CPUs parked (`emu/sound.c`):
 - The sum, sampled at 48 kHz (each sample the mean of the chips' 125 kHz
   ticks in it), clipped to 16 bits.
 
+### 2.2 The ROM set's data (X1, `extract`)
+
+- `starforce --extract` writes `gfx/fg.txt` (the 512 fg tiles, pens 0-7
+  in the board's orientation), `gfx/bg1.txt`, `bg2.txt` (256 tiles of
+  16x16 each), `bg3.txt` (128), `gfx/sprites.txt` (512 16x16 units),
+  `gfx/font.txt` (the messages' ASCII: digits $30-$39, A-Z $41-$5A, a
+  space $20; the status line's own: PLAYER $0C-$11, HI-SCO $12-$17, the
+  digits 0-7 $18-$1F; its 8 and 9 are $20 and $21, $20 also the
+  messages' space, hidden by their colours), `sound/wave.txt` (`07b.bin`),
+  `tables.txt` (the two programs whole: main, then sub at +$8000), the
+  previews (the tile sets, and the attract mode's title and demo screens
+  from the emulated board) and `manifest.txt` last. `extract_load_gfx`
+  reads the graphics back for the game in C. Development builds extract
+  to `build/assets` after each build; the program extracts on its first
+  run with a ROM set (to the save folder when its own is read-only).
+
 To confirm by probe (written up here as confirmed):
 - **High scores:** a table with initials in RAM.
 - **The cocktail flip** on MAME's cocktail run (the flip's tile and
@@ -219,7 +235,7 @@ To confirm by probe (written up here as confirmed):
 | P0 | `git init`, skeleton from Galaga, loader for the starforc set, test card, MAME ROM map, packaging, CI, `CLAUDE.md`, README | `enhance`, `rom_load`, `mame_rom_map` pass | done 2026-10-25 |
 | E1 | Two Z80s, the PIO and CTC, board (memory maps, latches, interrupts, watchdog), video (fg, three bg layers, sprites, palette RAM); the game plays via `--emulate` (silent) | `z80`; `mame_emu`: both CPUs cycle for cycle over traced frames; RAM and pictures equal at captured frames (`mame_capture`) | done 2026-10-25 (no watchdog found) |
 | E2 | Three SN76489As, the DAC (waveform from `07b.bin`, stepped by the CTC), the volume filter | each voice exact; the mix's level and timing as MAME's wav | done 2026-10-25 |
-| X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | not started |
+| X1 | Extractor: fg and bg tiles, sprites, font, DAC waveform, tables | `extract` | done 2026-10-25 |
 | C0-C3 | RE notes; the C game (both CPUs' programs, the PIO and CTC, the board's scheduler), then the default | `frame`; the C game plays from power-on through game over | not started |
 | E3/E4 | Polish (cocktail flip, devices, web), the DIP switches' menu, high-score saving, release | device checklist; published | not started |
 
@@ -251,8 +267,10 @@ asking.
   (`game.wav`): in 1/10 s windows where MAME is not quiet, at least 90%
   within 3 dB of its level
 - `extract` - label `rom`: two extractions are byte-identical and hold
-  every file; what is read back is the ROM set's; the font reads the title
-  screen the emulated board draws; no manifest without a ROM set
+  every file; the graphics, waveform and tables read back are the ROM
+  set's; the font reads "GAME OVER", "HI-SCORE", "PLAYER1" and "INSERT
+  COIN" off the attract mode the emulated board draws, each letter its
+  tile's pixels in its colour; no manifest without a ROM set
 - `frame` - label `rom`: the C game and the board from power-on with the
   tests' player (an attract cycle, then a game to its end): all memory,
   the latches, the sound chips' registers and the frame's sound equal at
