@@ -8,7 +8,8 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   body { display: flex; align-items: center; justify-content: center; }
-  canvas { display: block; image-rendering: pixelated; outline: none; }
+  /* The page sizes the canvas; SDL follows it (resizes too) and the game lays the picture out in it. */
+  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; outline: none; }
   #status { position: fixed; color: #888; font: 14px monospace; }
 </style>
 </head>
